@@ -80,6 +80,21 @@ def _risky_features() -> StatementFeatures:
     f.one_dominant_sender_share = 0.9
     f.rejected_operations_count = 10
     f.card_purchases_count = 0
+    # третья волна: антифрод-сигналы
+    f.structuring_sub_threshold_count = 6
+    f.smurfing_same_receiver_max = 8
+    f.velocity_per_minute_max = 5
+    f.self_transfer_banks_unique = 4
+    f.mirror_transfers_pairs_count = 5
+    # четвёртая волна: «скрытые» сигналы
+    f.return_diff_bank_count = 6
+    f.weekend_turnover_share = 0.75
+    f.deep_night_ratio = 0.3
+    f.one_time_counterparty_ratio = 0.85
+    f.one_time_counterparty_unique = 40
+    f.cash_split_same_day_max = 6
+    f.outgoing_only_days_share = 0.55
+    f.outgoing_only_days_total = 15
     return f
 
 
@@ -271,9 +286,259 @@ def test_rejected_operations_triggers():
     assert any(flag.rule_id == "rejected_operations" and flag.severity == "red" for flag in a.flags)
 
 
+# ----- правила, добавленные в третьей волне (антифрод-системы + комплаенс 2025–2026) -----
+
+
+def test_structuring_sub_threshold_triggers():
+    f = _clean_features()
+    f.structuring_sub_threshold_count = 6
+    a = assess_risk(f)
+    assert any(flag.rule_id == "structuring_sub_threshold" and flag.severity == "red" for flag in a.flags)
+
+
+def test_smurfing_same_receiver_triggers():
+    f = _clean_features()
+    f.smurfing_same_receiver_max_ops = 8
+    f.smurfing_same_receiver_max_sum = 400_000
+    a = assess_risk(f)
+    assert any(flag.rule_id == "smurfing_same_receiver" and flag.severity == "red" for flag in a.flags)
+
+
+def test_smurfing_without_sum_does_not_trigger():
+    f = _clean_features()
+    # количество — красная зона, но сумма маленькая
+    f.smurfing_same_receiver_max_ops = 8
+    f.smurfing_same_receiver_max_sum = 5_000
+    a = assess_risk(f)
+    assert not any(flag.rule_id == "smurfing_same_receiver" for flag in a.flags)
+
+
+def test_nfc_atm_ops_triggers():
+    f = _clean_features()
+    f.nfc_atm_ops_count = 5
+    a = assess_risk(f)
+    assert any(flag.rule_id == "nfc_atm_ops" and flag.severity == "red" for flag in a.flags)
+
+
+def test_droppers_registry_triggers():
+    f = _clean_features()
+    f.droppers_registry_hits_count = 2
+    a = assess_risk(f)
+    assert any(flag.rule_id == "droppers_registry" and flag.severity == "red" for flag in a.flags)
+
+
+def test_le_to_individual_regular_triggers():
+    f = _clean_features()
+    f.has_salary_anchor = False
+    f.le_to_individual_regular_count = 8
+    a = assess_risk(f)
+    assert any(flag.rule_id == "le_to_individual_regular" and flag.severity == "red" for flag in a.flags)
+
+
+def test_le_to_individual_skipped_when_salary_present():
+    f = _clean_features()
+    f.has_salary_anchor = True
+    f.le_to_individual_regular_count = 8
+    a = assess_risk(f)
+    assert not any(flag.rule_id == "le_to_individual_regular" for flag in a.flags)
+
+
+def test_precious_metals_after_income_triggers():
+    f = _clean_features()
+    f.precious_metals_after_income_count = 4
+    a = assess_risk(f)
+    assert any(flag.rule_id == "precious_metals_after_income" and flag.severity == "red" for flag in a.flags)
+
+
+def test_fatf_high_risk_transfers_triggers():
+    f = _clean_features()
+    f.fatf_high_risk_transfers_count = 4
+    a = assess_risk(f)
+    assert any(flag.rule_id == "fatf_high_risk_transfers" and flag.severity == "red" for flag in a.flags)
+
+
+def test_gift_loan_abuse_triggers():
+    f = _clean_features()
+    f.gift_loan_abuse_count = 10
+    f.gift_loan_abuse_share = 0.5
+    a = assess_risk(f)
+    assert any(flag.rule_id == "gift_loan_abuse" and flag.severity == "red" for flag in a.flags)
+
+
+def test_velocity_per_minute_triggers():
+    f = _clean_features()
+    f.velocity_per_minute_max = 8
+    a = assess_risk(f)
+    assert any(flag.rule_id == "velocity_per_minute" and flag.severity == "red" for flag in a.flags)
+
+
+def test_self_transfer_multi_banks_triggers():
+    f = _clean_features()
+    f.self_transfer_banks_unique = 5
+    a = assess_risk(f)
+    assert any(flag.rule_id == "self_transfer_multi_banks" and flag.severity == "red" for flag in a.flags)
+
+
+def test_mirror_transfers_triggers():
+    f = _clean_features()
+    f.mirror_transfers_pairs_count = 10
+    a = assess_risk(f)
+    assert any(flag.rule_id == "mirror_transfers_counterparty" and flag.severity == "red" for flag in a.flags)
+
+
+def test_sbp_split_same_receiver_triggers():
+    f = _clean_features()
+    f.sbp_split_same_receiver_max_ops = 6
+    a = assess_risk(f)
+    assert any(flag.rule_id == "sbp_split_same_receiver" and flag.severity == "red" for flag in a.flags)
+
+
 def test_no_card_purchases_triggers():
     f = _clean_features()
     f.card_purchases_count = 0
     f.tx_count = 40
     a = assess_risk(f)
     assert any(flag.rule_id == "no_card_purchases" for flag in a.flags)
+
+
+# ----- четвёртая волна: «скрытые» сигналы антифрод-систем -----
+
+
+def test_return_to_different_bank_triggers():
+    f = _clean_features()
+    f.return_diff_bank_count = 6
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "return_to_different_bank" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_cfa_digital_assets_triggers():
+    f = _clean_features()
+    f.cfa_digital_assets_count = 5
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "cfa_digital_assets" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_third_party_settlement_triggers():
+    f = _clean_features()
+    f.third_party_settlement_count = 10
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "third_party_settlement" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_pensioner_drain_triggers_only_when_pension_exists():
+    # без пенсионного дохода правило не должно срабатывать
+    f = _clean_features()
+    f.pensioner_drain_share = 0.95
+    f.pensioner_incomes_count = 0
+    a = assess_risk(f)
+    assert not any(flag.rule_id == "pensioner_drain_pattern" for flag in a.flags)
+    # с пенсионным доходом — срабатывает красным
+    f.pensioner_incomes_count = 1
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "pensioner_drain_pattern" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_weekend_dominance_triggers():
+    f = _clean_features()
+    f.weekend_turnover_share = 0.8
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "weekend_dominance" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_deep_night_ops_triggers():
+    f = _clean_features()
+    f.deep_night_ratio = 0.3
+    a = assess_risk(f)
+    assert any(flag.rule_id == "deep_night_ops" and flag.severity == "red" for flag in a.flags)
+
+
+def test_benford_deviation_requires_min_sample():
+    # Маленькая выборка — правило не срабатывает, даже если χ² большой.
+    f = _clean_features()
+    f.benford_chi2 = 100.0
+    f.benford_sample_size = 5
+    a = assess_risk(f)
+    assert not any(flag.rule_id == "benford_deviation" for flag in a.flags)
+    # Большая выборка + большой χ² — красный.
+    f.benford_sample_size = 50
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "benford_deviation" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_one_time_counterparty_triggers():
+    f = _clean_features()
+    f.one_time_counterparty_ratio = 0.9
+    f.one_time_counterparty_unique = 30
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "one_time_counterparty_ratio" and flag.severity == "red"
+        for flag in a.flags
+    )
+
+
+def test_one_time_counterparty_ignored_when_small_sample():
+    f = _clean_features()
+    f.one_time_counterparty_ratio = 0.95
+    f.one_time_counterparty_unique = 3
+    a = assess_risk(f)
+    assert not any(flag.rule_id == "one_time_counterparty_ratio" for flag in a.flags)
+
+
+def test_multi_employer_salary_triggers():
+    f = _clean_features()
+    f.multi_employer_salary_count = 6
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "multi_employer_salary" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_cash_split_same_day_triggers():
+    f = _clean_features()
+    f.cash_split_same_day_max = 7
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "cash_split_same_day" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_outgoing_only_days_triggers():
+    f = _clean_features()
+    f.outgoing_only_days_share = 0.6
+    f.outgoing_only_days_total = 20
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "outgoing_only_days" and flag.severity == "red" for flag in a.flags
+    )
+
+
+def test_budget_funds_fast_transit_triggers():
+    f = _clean_features()
+    f.budget_funds_incomes_count = 2
+    f.budget_funds_fast_transit_count = 4
+    a = assess_risk(f)
+    assert any(
+        flag.rule_id == "budget_funds_fast_transit" and flag.severity == "red"
+        for flag in a.flags
+    )
+
+
+def test_budget_funds_rule_requires_incomes():
+    # Без самих бюджетных поступлений правило молчит.
+    f = _clean_features()
+    f.budget_funds_incomes_count = 0
+    f.budget_funds_fast_transit_count = 5
+    a = assess_risk(f)
+    assert not any(flag.rule_id == "budget_funds_fast_transit" for flag in a.flags)

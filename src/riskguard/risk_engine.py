@@ -343,6 +343,173 @@ def _rule_gambling(feat: StatementFeatures, _: Thresholds) -> RiskFlag | None:
     return _make_flag(spec, intensity, feat.gambling_ops_count, 15, msg)
 
 
+# ---------- правила, вытянутые из разбора banki.ru-кейсов 2025–2026 ----------
+
+
+def _rule_fast_in_out(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(feat.fast_inout_share, th.fast_inout_share_yellow, th.fast_inout_share_red)
+    if intensity == 0:
+        return None
+    spec = RULES["fast_in_out"]
+    msg = (
+        f"В {feat.fast_inout_share * 100:.0f}% случаев деньги уходили со счёта "
+        f"быстрее, чем за {th.fast_inout_window_seconds} секунд после поступления "
+        f"({feat.fast_inout_pairs_count} пар in→out). По МР 16-МР (п.4) это прямой признак транзита."
+    )
+    return _make_flag(spec, intensity, feat.fast_inout_share, th.fast_inout_share_red, msg)
+
+
+def _rule_no_lifestyle(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    # Если наблюдение <14 дней, слишком мало данных, чтобы уверенно говорить.
+    if feat.days_observed < 14:
+        return None
+    intensity = _intensity(
+        feat.days_without_lifestyle, th.no_lifestyle_days_yellow, th.no_lifestyle_days_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["no_lifestyle_payments"]
+    msg = (
+        f"Последние {feat.days_without_lifestyle} дн. по счёту не было платежей за "
+        f"ЖКХ/связь/маркетплейсы/АЗС. МР 16-МР п.8 считает это маркером дроп-счёта."
+    )
+    return _make_flag(
+        spec, intensity, feat.days_without_lifestyle, th.no_lifestyle_days_red, msg
+    )
+
+
+def _rule_round_the_clock(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.active_hours_span, th.round_clock_hours_yellow, th.round_clock_hours_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["round_the_clock"]
+    msg = (
+        f"Активность по счёту охватывает {feat.active_hours_span} разных часов в сутках "
+        f"(в среднем {feat.active_hours_avg_per_day:.1f} ч/день). "
+        f"МР 16-МР п.5 говорит: круглосуточная активность — признак подозрительности."
+    )
+    return _make_flag(
+        spec, intensity, feat.active_hours_span, th.round_clock_hours_red, msg
+    )
+
+
+def _rule_crypto_gambling_combo(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.crypto_ops_count < th.crypto_gambling_combo_threshold:
+        return None
+    if feat.gambling_ops_count < th.crypto_gambling_combo_threshold:
+        return None
+    # если сработало оба порога — сразу red
+    spec = RULES["crypto_gambling_combo"]
+    msg = (
+        f"В выписке одновременно {feat.crypto_ops_count} крипто-операций и "
+        f"{feat.gambling_ops_count} операций с букмекерами. "
+        "По кейсу Сбербанка 2026 года это триггер на отключение дистанционного "
+        "обслуживания без разблокировки."
+    )
+    return _make_flag(
+        spec, 1.0, feat.crypto_ops_count + feat.gambling_ops_count,
+        th.crypto_gambling_combo_threshold * 2, msg,
+        (feat.evidence.get("crypto_samples") or []) + (feat.evidence.get("gambling_samples") or []),
+    )
+
+
+def _rule_sbp_out_after_income(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.sbp_out_after_income_share,
+        th.sbp_out_after_income_share_yellow,
+        th.sbp_out_after_income_share_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["sbp_out_after_income"]
+    msg = (
+        f"В {feat.sbp_out_after_income_share * 100:.0f}% дней с поступлениями деньги "
+        f"в тот же час уходили через СБП в другой банк. Т-Банк в 2026 году массово "
+        "блокировал такие сценарии."
+    )
+    return _make_flag(
+        spec, intensity, feat.sbp_out_after_income_share, th.sbp_out_after_income_share_red, msg
+    )
+
+
+def _rule_third_party_cash(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.third_party_cash_deposits_count,
+        th.third_party_cash_deposits_yellow,
+        th.third_party_cash_deposits_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["third_party_cash_deposits"]
+    msg = (
+        f"На счёт {feat.third_party_cash_deposits_count} раз внесены наличные "
+        "(или похожие зачисления). МР 11-МР (09.09.2025) прямо обязал банки "
+        "углублённо проверять такие операции."
+    )
+    return _make_flag(
+        spec, intensity, feat.third_party_cash_deposits_count, th.third_party_cash_deposits_red, msg
+    )
+
+
+def _rule_ip_samozanyat(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.ip_samozanyat_transfers_count,
+        th.ip_samozanyat_transfers_yellow,
+        th.ip_samozanyat_transfers_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["ip_samozanyat_transfers"]
+    msg = (
+        f"Переводов в сторону ИП/самозанятых — {feat.ip_samozanyat_transfers_count}. "
+        "Сбер (кейс 13.08.2025) блокирует такие операции при отсутствии подтверждения."
+    )
+    return _make_flag(
+        spec, intensity, feat.ip_samozanyat_transfers_count, th.ip_samozanyat_transfers_red, msg
+    )
+
+
+def _rule_collective_fundraising(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.collective_fundraising_max_unique,
+        th.collective_fundraising_unique_yellow,
+        th.collective_fundraising_unique_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["collective_fundraising"]
+    msg = (
+        f"За {th.collective_fundraising_window_days} дня(-ей) на счёт пришли деньги от "
+        f"{feat.collective_fundraising_max_unique} разных физлиц. "
+        "Т-Банк (кейс 25.02.2026) расценивает подобные «сборы» как подозрительные."
+    )
+    return _make_flag(
+        spec, intensity, feat.collective_fundraising_max_unique,
+        th.collective_fundraising_unique_red, msg,
+    )
+
+
+def _rule_new_senders_dominance(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    # Правило работает только когда есть достаточно данных для разделения на полупериоды.
+    if feat.days_observed < 14:
+        return None
+    intensity = _intensity(
+        feat.new_senders_share, th.new_senders_share_yellow, th.new_senders_share_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["new_senders_dominance"]
+    msg = (
+        f"{feat.new_senders_share * 100:.0f}% поступлений во второй половине периода — от "
+        "отправителей, которых раньше не было. С 25.07.2024 это признак 161-ФЗ."
+    )
+    return _make_flag(
+        spec, intensity, feat.new_senders_share, th.new_senders_share_red, msg
+    )
+
+
 _RULE_FUNCS = [
     _rule_p2p_daily,
     _rule_p2p_month,
@@ -357,6 +524,16 @@ _RULE_FUNCS = [
     _rule_spike,
     _rule_161,
     _rule_gambling,
+    # правила из banki.ru-кейсов 2025–2026
+    _rule_fast_in_out,
+    _rule_no_lifestyle,
+    _rule_round_the_clock,
+    _rule_crypto_gambling_combo,
+    _rule_sbp_out_after_income,
+    _rule_third_party_cash,
+    _rule_ip_samozanyat,
+    _rule_collective_fundraising,
+    _rule_new_senders_dominance,
 ]
 
 

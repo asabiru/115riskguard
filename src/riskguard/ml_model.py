@@ -63,6 +63,19 @@ FEATURE_ORDER: tuple[str, ...] = (
     "new_counterparty_share",
     "night_tx_ratio",
     "has_salary_anchor",
+    # --- добавлено после разбора banki.ru-кейсов 2025–2026 ---
+    "fast_inout_share",
+    "fast_inout_pairs_count",
+    "has_lifestyle_payments",
+    "lifestyle_payments_count",
+    "days_without_lifestyle",
+    "active_hours_span",
+    "active_hours_avg_per_day",
+    "sbp_out_after_income_share",
+    "third_party_cash_deposits_count",
+    "ip_samozanyat_transfers_count",
+    "collective_fundraising_max_unique",
+    "new_senders_share",
 )
 
 

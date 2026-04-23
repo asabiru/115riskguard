@@ -44,12 +44,25 @@ def _risky_features() -> StatementFeatures:
     f.residual_ratio = 0.01
     f.cash_ratio = 0.6
     f.crypto_ops_count = 12
+    f.gambling_ops_count = 20
     f.incoming_unique_counterparties = 55
     f.incoming_from_individuals_count = 30
     f.turnover_spike_ratio = 7.0
     f.new_counterparty_share = 0.8
     f.night_tx_ratio = 0.3
     f.largest_income = 700_000
+    # новые паттерны (banki.ru 2025–2026)
+    f.fast_inout_share = 0.6
+    f.fast_inout_pairs_count = 50
+    f.has_lifestyle_payments = False
+    f.days_without_lifestyle = 60
+    f.active_hours_span = 23
+    f.active_hours_avg_per_day = 20.0
+    f.sbp_out_after_income_share = 0.85
+    f.third_party_cash_deposits_count = 12
+    f.ip_samozanyat_transfers_count = 40
+    f.collective_fundraising_max_unique = 25
+    f.new_senders_share = 0.9
     return f
 
 
@@ -83,3 +96,74 @@ def test_ml_blend_monotonic():
     low = assess_risk(base, ml_probability=0.05).risk_score
     high = assess_risk(base, ml_probability=0.95).risk_score
     assert high >= low
+
+
+# ----- правила, добавленные после разбора banki.ru 2025–2026 -----
+
+
+def test_fast_in_out_triggers():
+    f = _clean_features()
+    f.fast_inout_share = 0.5
+    f.fast_inout_pairs_count = 20
+    a = assess_risk(f)
+    assert any(flag.rule_id == "fast_in_out" and flag.severity == "red" for flag in a.flags)
+
+
+def test_no_lifestyle_payments_triggers():
+    f = _clean_features()
+    f.days_without_lifestyle = 60
+    f.has_lifestyle_payments = False
+    a = assess_risk(f)
+    assert any(flag.rule_id == "no_lifestyle_payments" for flag in a.flags)
+
+
+def test_crypto_gambling_combo_red():
+    f = _clean_features()
+    f.crypto_ops_count = 5
+    f.gambling_ops_count = 5
+    a = assess_risk(f)
+    combo = [flag for flag in a.flags if flag.rule_id == "crypto_gambling_combo"]
+    assert combo and combo[0].severity == "red"
+
+
+def test_sbp_out_after_income_triggers():
+    f = _clean_features()
+    f.sbp_out_after_income_share = 0.8
+    a = assess_risk(f)
+    assert any(flag.rule_id == "sbp_out_after_income" and flag.severity == "red" for flag in a.flags)
+
+
+def test_third_party_cash_deposits_triggers():
+    f = _clean_features()
+    f.third_party_cash_deposits_count = 10
+    a = assess_risk(f)
+    assert any(flag.rule_id == "third_party_cash_deposits" for flag in a.flags)
+
+
+def test_ip_samozanyat_triggers():
+    f = _clean_features()
+    f.ip_samozanyat_transfers_count = 30
+    a = assess_risk(f)
+    assert any(flag.rule_id == "ip_samozanyat_transfers" and flag.severity == "red" for flag in a.flags)
+
+
+def test_collective_fundraising_triggers():
+    f = _clean_features()
+    f.collective_fundraising_max_unique = 25
+    a = assess_risk(f)
+    assert any(flag.rule_id == "collective_fundraising" and flag.severity == "red" for flag in a.flags)
+
+
+def test_new_senders_dominance_triggers():
+    f = _clean_features()
+    f.new_senders_share = 0.9
+    a = assess_risk(f)
+    assert any(flag.rule_id == "new_senders_dominance" and flag.severity == "red" for flag in a.flags)
+
+
+def test_round_the_clock_triggers():
+    f = _clean_features()
+    f.active_hours_span = 23
+    f.active_hours_avg_per_day = 20.0
+    a = assess_risk(f)
+    assert any(flag.rule_id == "round_the_clock" and flag.severity == "red" for flag in a.flags)

@@ -31,6 +31,54 @@ class TestToFloat:
         assert _to_float(raw) == expected
 
 
+class TestInferChannelMerchantVsP2P:
+    """QR-оплата мерчанту не должна считаться P2P-переводом."""
+
+    def test_sbp_qr_merchant_is_card_not_p2p(self):
+        from riskguard.parser import infer_channel
+
+        # «Оплата по QR–коду СБП» — это оплата мерчанту, НЕ P2P.
+        assert infer_channel("FUNPAY. Операция по карте ****2546", "Оплата по QR–коду СБП") == "card"
+        assert (
+            infer_channel("1shot.club. Операция по карте ****2546", "Оплата по QR–коду СБП")
+            == "card"
+        )
+        assert (
+            infer_channel("QSR 25101_P_QR SAMARA RUS. Операция по карте ****2546", "Оплата по QR–коду СБП")
+            == "card"
+        )
+
+    def test_merchant_category_is_card(self):
+        from riskguard.parser import infer_channel
+
+        assert (
+            infer_channel("Додо Пицца, Самара-11. Операция по карте ****2546", "Рестораны и кафе")
+            == "card"
+        )
+        assert (
+            infer_channel(
+                "PYATEROCHKA 6774_P_QR SAMARA RUS. Операция по карте ****2546", "Супермаркеты"
+            )
+            == "card"
+        )
+
+    def test_p2p_person_transfer_stays_p2p(self):
+        from riskguard.parser import infer_channel
+
+        assert (
+            infer_channel(
+                "Перевод для К. Гордей Алексеевич. Операция по счету ****0880", "Перевод с карты"
+            )
+            == "p2p"
+        )
+        assert (
+            infer_channel(
+                "Перевод от К. Даниил Алексеевич. Операция по счету ****0880", "Перевод на карту"
+            )
+            == "p2p"
+        )
+
+
 class TestInferChannel:
     @pytest.mark.parametrize(
         "description, expected",

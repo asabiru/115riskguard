@@ -341,6 +341,168 @@ CASH_WITHDRAWAL_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# ------ третья волна: сигналы антифрод-систем и комплаенс-правил 2025–2026 ------
+
+# NFC-банкоматы — 7-й признак ЦБ РФ (приказ ОД-2506 от 05.11.2025, действует
+# с 01.01.2026). Операции с бесконтактным банкоматом теперь автоматически
+# попадают в антифрод-мониторинг как потенциальный перевод под давлением.
+NFC_ATM_KEYWORDS: tuple[str, ...] = (
+    "nfc",
+    "нфс",
+    "nfc банкомат",
+    "nfc-банкомат",
+    "бесконтактн",
+    "contactless",
+    "бесконтактный банкомат",
+    "tap & go",
+    "tap and go",
+)
+
+# Маркеры «база дропперов» / ФинЦЕРТ / отказ по 161-ФЗ.
+# Если в выписке такие строки уже есть — антифрод-модель банка вас уже
+# передала в ФинЦЕРТ (база ведётся согласно Указанию ЦБ 6748-У).
+DROPPERS_REGISTRY_KEYWORDS: tuple[str, ...] = (
+    "финцерт",
+    "fincert",
+    "база мошеннических",
+    "реестр мошенн",
+    "признак мошенн",
+    "161-фз",
+    "получатель внесён в реестр",
+    "получатель включён в базу",
+    "подозрительный получатель",
+    "возврат по приказу цб",
+    "указание 6748-у",
+)
+
+# FATF high-risk и grey-list страны + классические «отмывочные» юрисдикции.
+# Актуально на апрель 2026 (CIS-исключены, акцент на Дубай/Турция/Кипр/офшоры).
+FATF_HIGH_RISK_KEYWORDS: tuple[str, ...] = (
+    "иран",
+    "iran",
+    "корея",
+    "north korea",
+    "кндр",
+    "dprk",
+    "мьянма",
+    "myanmar",
+    "алжир",
+    "венесуэла",
+    "сирия",
+    "syria",
+    "британские виргинские",
+    "bvi",
+    "кайман",
+    "cayman",
+    "панама",
+    "белиз",
+    "сейшел",
+    "кипр",
+    "cyprus",
+    "мальта",
+    "оаэ",
+    "дубай",
+    "uae",
+    "hong kong",
+    "гонконг",
+    "singapore",
+    "сингапур",
+)
+
+# Злоупотребление назначениями «подарок/займ/возврат долга» — МР 4-МР ЦБ:
+# часто используется как прикрытие для обхода 115-ФЗ при приёме «серых» денег.
+GIFT_LOAN_KEYWORDS: tuple[str, ...] = (
+    "подарок",
+    "в подарок",
+    "gift",
+    "займ",
+    "заём",
+    "в долг",
+    "возврат долга",
+    "возврат займа",
+    "материальная помощь",
+    "матпомощь",
+    "по дружеской",
+    "дружеский перевод",
+)
+
+# Драгоценные металлы и ОМС. Положение ЦБ 375-П (редакция 2025) прямо
+# указывает на эти операции как на необычные при покупке сразу после
+# крупного поступления без хранения актива в банке.
+PRECIOUS_METALS_KEYWORDS: tuple[str, ...] = (
+    "золото",
+    "серебро",
+    "платина",
+    "палладий",
+    "драгоценн",
+    "драгметалл",
+    "омс ",
+    "обезличенный металлический",
+    "gold",
+    "silver",
+    "platinum",
+    "palladium",
+    "слиток",
+    "bullion",
+)
+
+# Маркеры «перевод себе» / «между счетами». Классический layering-приём:
+# деньги прогоняются через цепочку своих счетов в разных банках, чтобы
+# оторвать их от исходной точки (FATF typologies, SAS AML scenarios).
+SELF_TRANSFER_KEYWORDS: tuple[str, ...] = (
+    "перевод себе",
+    "между своими",
+    "между счетами",
+    "на свой счёт",
+    "на свою карту",
+    "self-transfer",
+    "own account",
+    "me2me",
+    "m2m",
+    "перевод клиенту банка собственнику",
+)
+
+# Маркеры внешних банков — нужны для детекта «перевод себе через несколько
+# банков» (self-transfer fanout). Расширенный список с учётом БИК/SWIFT-кодов.
+EXTERNAL_BANK_NAMES: tuple[str, ...] = (
+    "сбербанк",
+    "sberbank",
+    "втб",
+    "vtb",
+    "альфа",
+    "alfa",
+    "тинькофф",
+    "тбанк",
+    "т-банк",
+    "tinkoff",
+    "газпромбанк",
+    "gazprombank",
+    "открытие",
+    "райффайзен",
+    "raiff",
+    "росбанк",
+    "rosbank",
+    "почта банк",
+    "ozon банк",
+    "ozon bank",
+    "яндекс банк",
+    "yandex bank",
+    "мтс банк",
+    "mts bank",
+    "мкб",
+    "промсвязьбанк",
+    "псб",
+    "psb",
+    "совкомбанк",
+    "sovcom",
+    "русский стандарт",
+    "rsb",
+    "уралсиб",
+    "home credit",
+    "хоум кредит",
+)
+
+
 # ----------------------------- пороги ----------------------------------
 
 
@@ -487,6 +649,66 @@ class Thresholds:
     # Отсутствие «настоящего пластика» (POS/онлайн-покупок) при активном счёте.
     no_card_purchases_tx_threshold: int = 20
 
+    # ---------- третья волна: антифрод-системы + комплаенс 2025–2026 ----------
+    # Structuring: операции чуть ниже порога обязательного контроля 600k ₽
+    # (ст.6 115-ФЗ) — классический признак FATF и SAS AML.
+    structuring_sub_threshold_yellow: int = 2
+    structuring_sub_threshold_red: int = 5
+    structuring_lower_bound_rub: float = 580_000.0
+    structuring_upper_bound_rub: float = 599_999.0
+    structuring_upper_bound_mln: float = 999_999.0
+    structuring_lower_bound_mln: float = 970_000.0
+
+    # Smurfing: несколько переводов одному получателю за день (дробление СБП).
+    # Классика FATF + правило ЦБ по обходу лимитов СБП 100k/сутки.
+    smurfing_same_receiver_ops_yellow: int = 3
+    smurfing_same_receiver_ops_red: int = 6
+    smurfing_same_receiver_sum_yellow: float = 100_000.0
+    smurfing_same_receiver_sum_red: float = 300_000.0
+
+    # NFC-банкоматы (приказ ЦБ ОД-2506 от 05.11.2025, действует с 01.01.2026).
+    nfc_atm_ops_yellow: int = 1
+    nfc_atm_ops_red: int = 3
+
+    # ФинЦЕРТ / база дропперов (Указание ЦБ 6748-У).
+    droppers_registry_hits_yellow: int = 1
+    droppers_registry_hits_red: int = 2
+
+    # Юрлицо/ИП → физлицу регулярно, без зарплатной статьи (375-П 2025).
+    le_to_individual_regular_yellow: int = 3
+    le_to_individual_regular_red: int = 6
+
+    # Покупка драгметаллов после поступления (375-П 2025).
+    precious_metals_after_income_yellow: int = 1
+    precious_metals_after_income_red: int = 3
+
+    # FATF high-risk юрисдикции.
+    fatf_transfers_yellow: int = 1
+    fatf_transfers_red: int = 3
+
+    # Злоупотребление «подарок/займ/возврат долга» (МР 4-МР).
+    gift_loan_abuse_yellow: int = 3
+    gift_loan_abuse_red: int = 8
+    gift_loan_abuse_share_yellow: float = 0.2
+    gift_loan_abuse_share_red: float = 0.4
+
+    # Velocity: N+ операций в одну минуту (FICO Falcon velocity-rule).
+    velocity_per_minute_yellow: int = 3
+    velocity_per_minute_red: int = 6
+
+    # Self-transfer fanout: переводы «себе» в разные банки (layering FATF).
+    self_transfer_banks_yellow: int = 2
+    self_transfer_banks_red: int = 4
+
+    # Mirror transfers: взаимные P2P с одним контрагентом (тест layering).
+    mirror_transfers_pairs_yellow: int = 3
+    mirror_transfers_pairs_red: int = 8
+
+    # СБП-split одному получателю (обход лимита 100k/сутки).
+    sbp_split_same_receiver_yellow: int = 3
+    sbp_split_same_receiver_red: int = 5
+    sbp_split_window_hours: int = 24
+
     # ----------------------- служебное -----------------------
     def tighten(self, factor: float = 0.7) -> Thresholds:
         """Вернуть более консервативные пороги для "Режима максимальной защиты".
@@ -571,6 +793,39 @@ class Thresholds:
             rejected_ops_count_yellow=max(1, int(self.rejected_ops_count_yellow * factor)),
             rejected_ops_count_red=max(2, int(self.rejected_ops_count_red * factor)),
             no_card_purchases_tx_threshold=max(5, int(self.no_card_purchases_tx_threshold * factor)),
+            structuring_sub_threshold_yellow=max(1, int(self.structuring_sub_threshold_yellow * factor)),
+            structuring_sub_threshold_red=max(2, int(self.structuring_sub_threshold_red * factor)),
+            structuring_lower_bound_rub=self.structuring_lower_bound_rub * factor,
+            structuring_upper_bound_rub=self.structuring_upper_bound_rub,
+            structuring_upper_bound_mln=self.structuring_upper_bound_mln,
+            structuring_lower_bound_mln=self.structuring_lower_bound_mln * factor,
+            smurfing_same_receiver_ops_yellow=max(2, int(self.smurfing_same_receiver_ops_yellow * factor)),
+            smurfing_same_receiver_ops_red=max(3, int(self.smurfing_same_receiver_ops_red * factor)),
+            smurfing_same_receiver_sum_yellow=self.smurfing_same_receiver_sum_yellow * factor,
+            smurfing_same_receiver_sum_red=self.smurfing_same_receiver_sum_red * factor,
+            nfc_atm_ops_yellow=max(1, int(self.nfc_atm_ops_yellow * factor)),
+            nfc_atm_ops_red=max(1, int(self.nfc_atm_ops_red * factor)),
+            droppers_registry_hits_yellow=max(1, int(self.droppers_registry_hits_yellow * factor)),
+            droppers_registry_hits_red=max(1, int(self.droppers_registry_hits_red * factor)),
+            le_to_individual_regular_yellow=max(1, int(self.le_to_individual_regular_yellow * factor)),
+            le_to_individual_regular_red=max(2, int(self.le_to_individual_regular_red * factor)),
+            precious_metals_after_income_yellow=max(1, int(self.precious_metals_after_income_yellow * factor)),
+            precious_metals_after_income_red=max(1, int(self.precious_metals_after_income_red * factor)),
+            fatf_transfers_yellow=max(1, int(self.fatf_transfers_yellow * factor)),
+            fatf_transfers_red=max(1, int(self.fatf_transfers_red * factor)),
+            gift_loan_abuse_yellow=max(1, int(self.gift_loan_abuse_yellow * factor)),
+            gift_loan_abuse_red=max(2, int(self.gift_loan_abuse_red * factor)),
+            gift_loan_abuse_share_yellow=max(0.05, self.gift_loan_abuse_share_yellow * factor),
+            gift_loan_abuse_share_red=max(0.1, self.gift_loan_abuse_share_red * factor),
+            velocity_per_minute_yellow=max(2, int(self.velocity_per_minute_yellow * factor)),
+            velocity_per_minute_red=max(3, int(self.velocity_per_minute_red * factor)),
+            self_transfer_banks_yellow=max(1, int(self.self_transfer_banks_yellow * factor)),
+            self_transfer_banks_red=max(2, int(self.self_transfer_banks_red * factor)),
+            mirror_transfers_pairs_yellow=max(1, int(self.mirror_transfers_pairs_yellow * factor)),
+            mirror_transfers_pairs_red=max(2, int(self.mirror_transfers_pairs_red * factor)),
+            sbp_split_same_receiver_yellow=max(2, int(self.sbp_split_same_receiver_yellow * factor)),
+            sbp_split_same_receiver_red=max(3, int(self.sbp_split_same_receiver_red * factor)),
+            sbp_split_window_hours=self.sbp_split_window_hours,
         )
 
 
@@ -1199,5 +1454,237 @@ RULES: dict[str, RuleSpec] = {
             "профиля в глазах банка."
         ),
         case_reference="МР ЦБ 16-МР п.8; banki.ru — кейсы Т-Банк/Альфа 2025–2026",
+    ),
+    # ------- третья волна: антифрод-системы + комплаенс 2025–2026 -------
+    "structuring_sub_threshold": RuleSpec(
+        id="structuring_sub_threshold",
+        name="Structuring: дробление под порогом обязательного контроля",
+        category="AML / FATF",
+        weight=20.0,
+        law="115-ФЗ ст.6 · 375-П · FATF 40 Recommendations",
+        why_dangerous=(
+            "Операции на 580–599 тыс. или 970–999 тыс. ₽ идут ровно под "
+            "порогом обязательного контроля (600k и 1M ₽). FICO Falcon, "
+            "SAS AML и все российские комплаенс-системы (ЦФТ, BSS, КУС) "
+            "ловят этот паттерн как классический FATF-structuring: "
+            "клиент сознательно избегает автоматического отчёта в Росфинмониторинг."
+        ),
+        action_hint=(
+            "Не дробите крупные суммы. Если операция реальная — лучше "
+            "пропустить её выше порога и подготовить подтверждающие документы. "
+            "Раздробленные операции намного подозрительнее, чем одна прозрачная."
+        ),
+        case_reference="FATF Typologies Report + ст.6 115-ФЗ (порог 600k/1M ₽)",
+    ),
+    "smurfing_same_receiver": RuleSpec(
+        id="smurfing_same_receiver",
+        name="Smurfing: дробление одному получателю в течение дня",
+        category="AML / FATF",
+        weight=16.0,
+        law="115-ФЗ · МР 4-МР · FATF",
+        why_dangerous=(
+            "3+ перевода одному и тому же получателю за сутки на суммарные "
+            "100k+ ₽ при среднем чеке <40k — классический smurfing. Банки "
+            "видят это как попытку обойти лимит СБП 100k ₽/сутки и признак "
+            "«оптового» канала (ставки, p2p-крипта, торговля товарами без регистрации)."
+        ),
+        action_hint=(
+            "Делайте один перевод вместо нескольких. Если делите намеренно — "
+            "скорее всего, вы уже нарушаете лимит СБП и попадаете в "
+            "автоматический антифрод-сценарий."
+        ),
+        case_reference="FATF smurfing typology · banki.ru — массовые СБП-блокировки 2025–2026",
+    ),
+    "nfc_atm_ops": RuleSpec(
+        id="nfc_atm_ops",
+        name="Операции с NFC-банкоматом (новый признак ЦБ 2026)",
+        category="Антифрод / 161-ФЗ",
+        weight=18.0,
+        law="161-ФЗ · Приказ ЦБ ОД-2506 от 05.11.2025",
+        why_dangerous=(
+            "С 01.01.2026 операции с бесконтактными (NFC) банкоматами включены "
+            "в обязательный список антифрод-признаков ЦБ РФ (ОД-2506, п.7). "
+            "Схема «снятие под давлением по NFC через QR» стала массовой в "
+            "конце 2025 — теперь каждая такая операция проходит усиленный контроль."
+        ),
+        action_hint=(
+            "При снятии крупных сумм используйте обычный банкомат с картой. "
+            "NFC/бесконтактное снятие без реальной необходимости лучше не "
+            "делать — это автоматически повышает фрод-скор операции."
+        ),
+        case_reference="cbr.ru — Приказ ОД-2506 от 05.11.2025 (действует с 01.01.2026)",
+    ),
+    "droppers_registry": RuleSpec(
+        id="droppers_registry",
+        name="Следы реестра дропперов ФинЦЕРТ в выписке",
+        category="Антифрод / 161-ФЗ",
+        weight=25.0,
+        law="161-ФЗ · Указание ЦБ 6748-У · ФинЦЕРТ",
+        why_dangerous=(
+            "Строки «возврат по 161-ФЗ / получатель внесён в реестр / ФинЦЕРТ / "
+            "признак мошеннической операции» — это прямой признак, что банк "
+            "уже остановил операцию по базе дропперов. Следующий шаг почти "
+            "всегда — приостановка карты или полный блок по 115-ФЗ."
+        ),
+        action_hint=(
+            "Срочно — в банк, лично или через чат: объяснить источник денег, "
+            "получить выписку и, если вы не дроппер, подать заявление на исключение "
+            "из базы (порядок обновлён Указанием 7287-У, действует с 02.05.2026)."
+        ),
+        case_reference="cbr.ru · ФинЦЕРТ + garant.ru — новый порядок исключения из базы дропперов",
+    ),
+    "le_to_individual_regular": RuleSpec(
+        id="le_to_individual_regular",
+        name="Регулярные переводы от юрлиц/ИП физлицу (не зарплата)",
+        category="Скрытый бизнес",
+        weight=13.0,
+        law="115-ФЗ · Положение 375-П (ред. 2025) · 422-ФЗ",
+        why_dangerous=(
+            "В обновлённом 375-П (февраль 2025) ЦБ прямо указал: регулярные "
+            "переводы от ЮЛ/ИП в адрес гражданина, если это не кредит, зарплата "
+            "или иные вознаграждения, — признак подозрительной операции. "
+            "Типичный кейс: «серые» выплаты гонораров или обналичивание через "
+            "зицпарт-ИП."
+        ),
+        action_hint=(
+            "Оформите отношения через самозанятость (422-ФЗ, НПД 4 %/6 %) или "
+            "трудовой договор. В назначении платежа должна быть чёткая ссылка "
+            "на договор и услугу."
+        ),
+        case_reference="ruslom.com — обновление 375-П 2025 · ЦБ РФ письмо от 18.02.2025",
+    ),
+    "precious_metals_after_income": RuleSpec(
+        id="precious_metals_after_income",
+        name="Покупка драгметаллов сразу после крупного поступления",
+        category="AML / 375-П",
+        weight=14.0,
+        law="115-ФЗ · Положение 375-П (ред. 2025)",
+        why_dangerous=(
+            "Положение 375-П в редакции 2025 выделяет в отдельный класс: "
+            "покупку драгметаллов/слитков/ОМС сразу после поступления крупных "
+            "средств без хранения актива в банке. Это классическая схема "
+            "«placement → integration» по FATF."
+        ),
+        action_hint=(
+            "Если покупка металлов реальная и для сбережений — открывайте ОМС "
+            "в том же банке (актив остаётся внутри периметра) и не выводите "
+            "сразу после зачисления. Разнесите операции во времени."
+        ),
+        case_reference="ruslom.com / hflabs.ru — 375-П редакция 2025, драгметаллы",
+    ),
+    "fatf_high_risk_transfers": RuleSpec(
+        id="fatf_high_risk_transfers",
+        name="Переводы в юрисдикции высокого риска FATF",
+        category="AML / Санкции",
+        weight=18.0,
+        law="115-ФЗ · FATF High-Risk Jurisdictions · 173-ФЗ",
+        why_dangerous=(
+            "Операции в адрес Ирана, КНДР, Мьянмы, Сирии, офшоров (BVI/Кайманы/"
+            "Панама/Кипр/Белиз/Сейшелы), а также Дубая/Гонконга/Сингапура "
+            "автоматически попадают под усиленный контроль. Даже если вы "
+            "просто помогаете родственнику — банк требует документы и "
+            "блокирует до прояснения."
+        ),
+        action_hint=(
+            "Заранее подготовьте: назначение платежа, документы (договор, счёт, "
+            "билет), документы о происхождении средств. По возможности, "
+            "проводите такие платежи через валютный контроль банка."
+        ),
+        case_reference="FATF High-Risk and Other Monitored Jurisdictions (актуальный список)",
+    ),
+    "gift_loan_abuse": RuleSpec(
+        id="gift_loan_abuse",
+        name="Злоупотребление назначениями «подарок / займ / возврат долга»",
+        category="Скрытый бизнес · МР 4-МР",
+        weight=10.0,
+        law="115-ФЗ · МР ЦБ 4-МР",
+        why_dangerous=(
+            "МР 4-МР прямо называет это типовым сценарием прикрытия. Если "
+            "20–40 % входящих P2P идут с назначением «подарок» или «возврат "
+            "долга» от разных людей — банк считает, что вы принимаете оплату "
+            "за товар/услугу, избегая налогов и статуса предпринимателя."
+        ),
+        action_hint=(
+            "Попросите отправителей писать реальное и осмысленное назначение. "
+            "Если это оплата за услугу — оформите самозанятость. «Подарок» "
+            "от нескольких разных людей каждую неделю — самый тревожный маркер."
+        ),
+        case_reference="МР ЦБ 4-МР · banki.ru — Сбер/Т-Банк кейсы «подарок, 115-ФЗ»",
+    ),
+    "velocity_per_minute": RuleSpec(
+        id="velocity_per_minute",
+        name="Всплеск velocity: несколько операций в одну минуту",
+        category="Антифрод / бот",
+        weight=12.0,
+        law="161-ФЗ · FICO Falcon velocity-rule",
+        why_dangerous=(
+            "Базовое правило FICO Falcon, SAS AML и ЦФТ Антифрод: человек не "
+            "совершает 3–6 разных операций в одну минуту. Такой всплеск "
+            "срабатывает на автоматизацию (скрипт / бот / массовая рассылка "
+            "СБП) и на перехват сессии мошенниками."
+        ),
+        action_hint=(
+            "Если это были реальные операции — растягивайте во времени (хотя "
+            "бы 10–15 сек между кликами). Если нет — срочно смените пароль и "
+            "проверьте устройства, на которых авторизован онлайн-банк."
+        ),
+        case_reference="FICO Falcon Fraud Manager · ЦФТ Антифрод velocity-сценарий",
+    ),
+    "self_transfer_multi_banks": RuleSpec(
+        id="self_transfer_multi_banks",
+        name="Layering: переводы «себе» между разными банками",
+        category="AML / FATF layering",
+        weight=14.0,
+        law="115-ФЗ · FATF typologies · МР 16-МР",
+        why_dangerous=(
+            "Переводы «на свой счёт» в 3+ разных банка — классический "
+            "layering по FATF. Даже если деньги ваши, многократная пересылка "
+            "между банками «для дешевизны» выглядит как попытка оторвать "
+            "средства от исходной точки. SAS AML и BSS Fraud-Анализ ловят "
+            "это как отдельный сценарий."
+        ),
+        action_hint=(
+            "Сократите количество «прокладочных» банков. Держите один "
+            "основной счёт для накоплений, другой — для повседневных операций."
+        ),
+        case_reference="FATF Methods and Trends · SAS AML scenario «self-transfer chain»",
+    ),
+    "mirror_transfers_counterparty": RuleSpec(
+        id="mirror_transfers_counterparty",
+        name="Зеркальные P2P (туда-сюда) с одним контрагентом",
+        category="AML / FATF layering",
+        weight=12.0,
+        law="115-ФЗ · МР 4-МР · FATF",
+        why_dangerous=(
+            "Взаимные переводы с одним и тем же контрагентом (входящий и "
+            "исходящий в близкой сумме) — признак «прогона денег»: маскировки "
+            "источника, теста антифрода перед крупной транзакцией или "
+            "расчёта за крипту на P2P-биржах."
+        ),
+        action_hint=(
+            "Избегайте перекрёстных переводов с одним и тем же человеком. "
+            "Если это семейные расчёты — объединяйте в один перевод с "
+            "осмысленным назначением."
+        ),
+        case_reference="МР 4-МР · banki.ru — кейсы «P2P-Binance, возврат 115-ФЗ»",
+    ),
+    "sbp_split_same_receiver": RuleSpec(
+        id="sbp_split_same_receiver",
+        name="Дробление СБП одному получателю (обход лимита 100k ₽/сутки)",
+        category="Антифрод / СБП",
+        weight=14.0,
+        law="115-ФЗ · 161-ФЗ · Правила СБП",
+        why_dangerous=(
+            "Лимит СБП для бесплатных переводов — 100k ₽/сутки на получателя. "
+            "Дробление на 3–5 переводов в один день по одному номеру телефона "
+            "трактуется антифродом как сознательный обход лимита и признак "
+            "«серой» оптовой активности (ставки, продажа крипты, товары "
+            "без регистрации)."
+        ),
+        action_hint=(
+            "Если нужна сумма >100k ₽ — используйте межбанковский перевод по "
+            "реквизитам или СБП-платёж с комиссией. Не дробите."
+        ),
+        case_reference="Правила СБП · banki.ru — массовые блокировки 2025–2026",
     ),
 }

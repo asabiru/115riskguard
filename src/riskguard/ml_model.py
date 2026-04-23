@@ -88,6 +88,21 @@ FEATURE_ORDER: tuple[str, ...] = (
     "one_dominant_sender_share",
     "rejected_operations_count",
     "card_purchases_count",
+    # --- третья волна: антифрод-системы + комплаенс 2025–2026 ---
+    "structuring_sub_threshold_count",
+    "smurfing_same_receiver_max_ops",
+    "smurfing_same_receiver_max_sum",
+    "nfc_atm_ops_count",
+    "droppers_registry_hits_count",
+    "le_to_individual_regular_count",
+    "precious_metals_after_income_count",
+    "fatf_high_risk_transfers_count",
+    "gift_loan_abuse_count",
+    "gift_loan_abuse_share",
+    "velocity_per_minute_max",
+    "self_transfer_banks_unique",
+    "mirror_transfers_pairs_count",
+    "sbp_split_same_receiver_max_ops",
 )
 
 

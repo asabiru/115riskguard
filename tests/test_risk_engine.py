@@ -17,6 +17,7 @@ def _clean_features() -> StatementFeatures:
     f.turnover_total = 170_000
     f.monthly_turnover = 170_000
     f.p2p_count = 3
+    f.p2p_incoming_count = 2
     f.p2p_last30d = 3
     f.p2p_unique_counterparties = 2
     f.p2p_max_per_day = 1
@@ -24,6 +25,10 @@ def _clean_features() -> StatementFeatures:
     f.residual_ratio = 0.4
     f.cash_ratio = 0.05
     f.has_salary_anchor = True
+    # аккуратно «живой» счёт — есть покупки, нет признаков batch-2 рисков
+    f.card_purchases_count = 40
+    f.avg_p2p_amount = 7_500
+    f.one_dominant_sender_share = 0.2
     return f
 
 
@@ -63,6 +68,18 @@ def _risky_features() -> StatementFeatures:
     f.ip_samozanyat_transfers_count = 40
     f.collective_fundraising_max_unique = 25
     f.new_senders_share = 0.9
+    # вторая волна паттернов (100+ кейсов banki.ru 2025–2026)
+    f.round_amounts_share = 0.8
+    f.identical_amount_max_repeats = 15
+    f.salary_day_drain_ratio = 0.95
+    f.dormant_days_before_spike = 45
+    f.multi_bank_fanout_max = 9
+    f.cross_border_transfers_count = 6
+    f.avg_p2p_amount = 900
+    f.atm_cashout_after_income_ratio = 0.8
+    f.one_dominant_sender_share = 0.9
+    f.rejected_operations_count = 10
+    f.card_purchases_count = 0
     return f
 
 
@@ -167,3 +184,96 @@ def test_round_the_clock_triggers():
     f.active_hours_avg_per_day = 20.0
     a = assess_risk(f)
     assert any(flag.rule_id == "round_the_clock" and flag.severity == "red" for flag in a.flags)
+
+
+# ----- правила, добавленные во второй волне (100+ кейсов banki.ru 2025–2026) -----
+
+
+def test_round_amounts_pattern_triggers():
+    f = _clean_features()
+    f.p2p_incoming_count = 30
+    f.round_amounts_share = 0.8
+    a = assess_risk(f)
+    assert any(flag.rule_id == "round_amounts_pattern" and flag.severity == "red" for flag in a.flags)
+
+
+def test_identical_amount_repeats_triggers():
+    f = _clean_features()
+    f.identical_amount_max_repeats = 15
+    a = assess_risk(f)
+    assert any(flag.rule_id == "identical_amount_repeats" and flag.severity == "red" for flag in a.flags)
+
+
+def test_salary_day_drain_triggers():
+    f = _clean_features()
+    f.salary_day_drain_ratio = 0.95
+    a = assess_risk(f)
+    assert any(flag.rule_id == "salary_day_drain" and flag.severity == "red" for flag in a.flags)
+
+
+def test_dormant_then_active_triggers():
+    f = _clean_features()
+    f.days_observed = 120
+    f.dormant_days_before_spike = 70
+    a = assess_risk(f)
+    assert any(flag.rule_id == "dormant_then_active" and flag.severity == "red" for flag in a.flags)
+
+
+def test_multi_bank_fanout_triggers():
+    f = _clean_features()
+    f.multi_bank_fanout_max = 10
+    a = assess_risk(f)
+    assert any(flag.rule_id == "multi_bank_fanout" and flag.severity == "red" for flag in a.flags)
+
+
+def test_cross_border_transfers_triggers():
+    f = _clean_features()
+    f.cross_border_transfers_count = 7
+    a = assess_risk(f)
+    assert any(flag.rule_id == "cross_border_transfers" and flag.severity == "red" for flag in a.flags)
+
+
+def test_very_low_avg_amount_triggers():
+    f = _clean_features()
+    f.p2p_count = 50
+    f.avg_p2p_amount = 900
+    a = assess_risk(f)
+    assert any(flag.rule_id == "very_low_avg_amount" and flag.severity == "red" for flag in a.flags)
+
+
+def test_atm_cashout_after_income_triggers():
+    f = _clean_features()
+    f.atm_cashout_after_income_ratio = 0.9
+    a = assess_risk(f)
+    assert any(flag.rule_id == "atm_cashout_after_income" and flag.severity == "red" for flag in a.flags)
+
+
+def test_one_dominant_sender_triggers():
+    f = _clean_features()
+    f.p2p_incoming_count = 20
+    f.one_dominant_sender_share = 0.9
+    a = assess_risk(f)
+    assert any(flag.rule_id == "one_dominant_sender" and flag.severity == "red" for flag in a.flags)
+
+
+def test_new_card_burst_triggers():
+    f = _clean_features()
+    f.days_observed = 10
+    f.turnover_total = 900_000
+    a = assess_risk(f)
+    assert any(flag.rule_id == "new_card_burst" and flag.severity == "red" for flag in a.flags)
+
+
+def test_rejected_operations_triggers():
+    f = _clean_features()
+    f.rejected_operations_count = 10
+    a = assess_risk(f)
+    assert any(flag.rule_id == "rejected_operations" and flag.severity == "red" for flag in a.flags)
+
+
+def test_no_card_purchases_triggers():
+    f = _clean_features()
+    f.card_purchases_count = 0
+    f.tx_count = 40
+    a = assess_risk(f)
+    assert any(flag.rule_id == "no_card_purchases" for flag in a.flags)

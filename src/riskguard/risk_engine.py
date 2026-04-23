@@ -510,6 +510,237 @@ def _rule_new_senders_dominance(feat: StatementFeatures, th: Thresholds) -> Risk
     )
 
 
+# ---------- правила, добавленные во второй волне (разбор 100+ кейсов banki.ru) ----------
+
+
+def _rule_round_amounts_pattern(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    # малое количество входящих — не судим
+    if feat.p2p_incoming_count < 5 and feat.income_total < 30_000:
+        return None
+    intensity = _intensity(
+        feat.round_amounts_share, th.round_amounts_share_yellow, th.round_amounts_share_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["round_amounts_pattern"]
+    msg = (
+        f"{feat.round_amounts_share * 100:.0f}% входящих поступлений — «ровные» суммы "
+        "(кратные 1k/5k/10k/50k). По МР 16-МР п.2 это маркер автоматических отправок "
+        "(обменник/миксер), а не живых физлиц."
+    )
+    return _make_flag(spec, intensity, feat.round_amounts_share, th.round_amounts_share_red, msg)
+
+
+def _rule_identical_amount_repeats(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.identical_amount_max_repeats,
+        th.identical_amount_repeats_yellow,
+        th.identical_amount_repeats_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["identical_amount_repeats"]
+    msg = (
+        f"Одна и та же входящая сумма повторилась {feat.identical_amount_max_repeats} раз. "
+        "Кейсы Ozon Bank и Цифра Банка 2026 — именно такие «дубли» триггерят 115-ФЗ."
+    )
+    return _make_flag(
+        spec, intensity, feat.identical_amount_max_repeats, th.identical_amount_repeats_red, msg
+    )
+
+
+def _rule_salary_day_drain(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.salary_day_drain_ratio <= 0.0:
+        return None
+    intensity = _intensity(
+        feat.salary_day_drain_ratio,
+        th.salary_day_drain_ratio_yellow,
+        th.salary_day_drain_ratio_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["salary_day_drain"]
+    msg = (
+        f"{feat.salary_day_drain_ratio * 100:.0f}% поступлений уходит со счёта в день "
+        "зачисления. МР 16-МР п.6 считает это признаком транзитного счёта."
+    )
+    return _make_flag(
+        spec, intensity, feat.salary_day_drain_ratio, th.salary_day_drain_ratio_red, msg
+    )
+
+
+def _rule_dormant_then_active(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    # В коротких выписках (<30 дней) пауза ничего не значит.
+    if feat.days_observed < 30:
+        return None
+    intensity = _intensity(
+        feat.dormant_days_before_spike, th.dormant_days_yellow, th.dormant_days_red
+    )
+    if intensity == 0:
+        return None
+    # пауза опасна, только если после неё реально шла активность (tx_count > 5).
+    if feat.tx_count < 5:
+        return None
+    spec = RULES["dormant_then_active"]
+    msg = (
+        f"В выписке есть «пауза» в {feat.dormant_days_before_spike} дней без операций, "
+        "после которой снова пошла активность. Сбер (2026) блокирует такие счета как "
+        "потенциально скомпрометированные."
+    )
+    return _make_flag(
+        spec, intensity, feat.dormant_days_before_spike, th.dormant_days_red, msg
+    )
+
+
+def _rule_multi_bank_fanout(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.multi_bank_fanout_max, th.multi_bank_fanout_yellow, th.multi_bank_fanout_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["multi_bank_fanout"]
+    msg = (
+        f"За {th.multi_bank_fanout_window_days} дней на счёт пришли поступления из "
+        f"{feat.multi_bank_fanout_max} разных банков. Это паттерн «сбор/копилка», "
+        "на который ориентируется антифрод Т-Банка и Ozon Bank."
+    )
+    return _make_flag(
+        spec, intensity, feat.multi_bank_fanout_max, th.multi_bank_fanout_red, msg
+    )
+
+
+def _rule_cross_border_transfers(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.cross_border_transfers_count,
+        th.cross_border_transfers_yellow,
+        th.cross_border_transfers_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["cross_border_transfers"]
+    msg = (
+        f"В выписке {feat.cross_border_transfers_count} операций с признаками СНГ/SWIFT "
+        "(Kaspi, Halyk, Айыл Банк и т.п.). В 2025 Сбер и ВТБ массово блокируют такие "
+        "переводы по 173-ФЗ и 115-ФЗ."
+    )
+    return _make_flag(
+        spec, intensity, feat.cross_border_transfers_count, th.cross_border_transfers_red, msg
+    )
+
+
+def _rule_very_low_avg_amount(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.p2p_count < th.very_low_avg_amount_min_ops:
+        return None
+    if feat.avg_p2p_amount <= 0:
+        return None
+    # Здесь меньше — хуже, поэтому интенсивность считаем «наоборот».
+    if feat.avg_p2p_amount <= th.very_low_avg_amount_red:
+        intensity = 1.0
+    elif feat.avg_p2p_amount <= th.very_low_avg_amount_yellow:
+        intensity = 0.5
+    else:
+        return None
+    spec = RULES["very_low_avg_amount"]
+    msg = (
+        f"При {feat.p2p_count} P2P-операциях средний чек — {feat.avg_p2p_amount:,.0f} ₽. "
+        "Десятки микро-переводов — характерный паттерн нелегального терминала или ставок."
+    )
+    return _make_flag(
+        spec, intensity, feat.avg_p2p_amount, th.very_low_avg_amount_red, msg
+    )
+
+
+def _rule_atm_cashout_after_income(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.atm_cashout_after_income_ratio,
+        th.atm_cashout_after_income_yellow,
+        th.atm_cashout_after_income_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["atm_cashout_after_income"]
+    msg = (
+        f"В среднем {feat.atm_cashout_after_income_ratio * 100:.0f}% дохода в тот же "
+        "день снимается в банкомате. МР 4-МР считает такой обнал обналичиванием в "
+        "интересах третьих лиц."
+    )
+    return _make_flag(
+        spec, intensity, feat.atm_cashout_after_income_ratio, th.atm_cashout_after_income_red, msg
+    )
+
+
+def _rule_one_dominant_sender(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.p2p_incoming_count < 6 and feat.incoming_unique_counterparties < 3:
+        return None
+    intensity = _intensity(
+        feat.one_dominant_sender_share,
+        th.one_dominant_sender_yellow,
+        th.one_dominant_sender_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["one_dominant_sender"]
+    msg = (
+        f"{feat.one_dominant_sender_share * 100:.0f}% всех поступлений — от одного "
+        "контрагента. Классический паттерн скрытой аренды или «серой» зарплаты."
+    )
+    return _make_flag(
+        spec, intensity, feat.one_dominant_sender_share, th.one_dominant_sender_red, msg
+    )
+
+
+def _rule_new_card_burst(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.days_observed >= th.new_card_burst_days_max:
+        return None
+    intensity = _intensity(
+        feat.turnover_total,
+        th.new_card_burst_turnover_yellow,
+        th.new_card_burst_turnover_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["new_card_burst"]
+    msg = (
+        f"Период наблюдения {feat.days_observed} дн., но оборот уже "
+        f"{feat.turnover_total:,.0f} ₽. Антифрод банков (Яндекс Банк, 2026) "
+        "особенно пристально смотрит на такие «молодые» счета."
+    )
+    return _make_flag(
+        spec, intensity, feat.turnover_total, th.new_card_burst_turnover_red, msg
+    )
+
+
+def _rule_rejected_operations(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.rejected_operations_count,
+        th.rejected_ops_count_yellow,
+        th.rejected_ops_count_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["rejected_operations"]
+    msg = (
+        f"В выписке {feat.rejected_operations_count} операций с признаками отказа или "
+        "возврата. Антифрод уже вас отметил — следующий шаг обычно блокировка карты."
+    )
+    return _make_flag(
+        spec, intensity, feat.rejected_operations_count, th.rejected_ops_count_red, msg
+    )
+
+
+def _rule_no_card_purchases(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.tx_count < th.no_card_purchases_tx_threshold:
+        return None
+    if feat.card_purchases_count > 0:
+        return None
+    spec = RULES["no_card_purchases"]
+    msg = (
+        f"За {feat.days_observed} дн. и {feat.tx_count} операций — ни одной покупки по "
+        "карте (магазин/такси/онлайн). По МР 16-МР п.8 счёт выглядит как дроп-счёт."
+    )
+    return _make_flag(spec, 1.0, 0, th.no_card_purchases_tx_threshold, msg)
+
+
 _RULE_FUNCS = [
     _rule_p2p_daily,
     _rule_p2p_month,
@@ -534,6 +765,19 @@ _RULE_FUNCS = [
     _rule_ip_samozanyat,
     _rule_collective_fundraising,
     _rule_new_senders_dominance,
+    # вторая волна
+    _rule_round_amounts_pattern,
+    _rule_identical_amount_repeats,
+    _rule_salary_day_drain,
+    _rule_dormant_then_active,
+    _rule_multi_bank_fanout,
+    _rule_cross_border_transfers,
+    _rule_very_low_avg_amount,
+    _rule_atm_cashout_after_income,
+    _rule_one_dominant_sender,
+    _rule_new_card_burst,
+    _rule_rejected_operations,
+    _rule_no_card_purchases,
 ]
 
 

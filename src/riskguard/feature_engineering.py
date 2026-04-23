@@ -31,11 +31,15 @@ from .constants import (
     CANON_COUNTERPARTY,
     CANON_DATE,
     CANON_DESCRIPTION,
+    CARD_PURCHASE_KEYWORDS,
     CASH_DEPOSIT_KEYWORDS,
+    CASH_WITHDRAWAL_KEYWORDS,
+    CROSS_BORDER_KEYWORDS,
     CRYPTO_KEYWORDS,
     EXTERNAL_BANK_HINTS,
     GAMBLING_KEYWORDS,
     LIFESTYLE_KEYWORDS,
+    REJECT_KEYWORDS,
     SALARY_KEYWORDS,
     SELF_EMPLOYED_KEYWORDS,
 )
@@ -134,6 +138,19 @@ class StatementFeatures:
 
     # Доля поступлений от ранее невиданных отправителей (во второй половине периода)
     new_senders_share: float = 0.0
+
+    # ---------- вторая волна признаков (100+ кейсов banki.ru 2025–2026) ----------
+    round_amounts_share: float = 0.0
+    identical_amount_max_repeats: int = 0
+    salary_day_drain_ratio: float = 0.0
+    dormant_days_before_spike: int = 0
+    multi_bank_fanout_max: int = 0
+    cross_border_transfers_count: int = 0
+    avg_p2p_amount: float = 0.0
+    atm_cashout_after_income_ratio: float = 0.0
+    one_dominant_sender_share: float = 0.0
+    rejected_operations_count: int = 0
+    card_purchases_count: int = 0
 
     # детали для отчёта (не участвуют в ML-модели)
     evidence: dict[str, list[dict]] = field(default_factory=dict)
@@ -300,10 +317,184 @@ def compute_features(df: pd.DataFrame, *, today: pd.Timestamp | None = None) -> 
 
     # -------- новые метрики из разбора banki.ru-кейсов 2025–2026 --------
     _compute_banki_case_features(df, descriptions, feat)
+    _compute_banki_case_features_v2(df, descriptions, feat)
 
     # evidence для отчёта -------------------------------------------
     feat.evidence = _build_evidence(df)
     return feat
+
+
+def _compute_banki_case_features_v2(
+    df: pd.DataFrame,
+    descriptions: pd.Series,
+    feat: StatementFeatures,
+) -> None:
+    """Вторая волна признаков: разбор 100+ отзывов banki.ru 2025–2026.
+
+    Паттерны:
+      * круглые суммы (5k/10k/50k) и повторы одинаковых сумм
+      * salary-day drain (>70 % зарплаты уходит в тот же день)
+      * dormant → spike (возвращение после длинной паузы)
+      * веер входящих из разных банков за 7 дней
+      * трансграничные переводы (СНГ/SWIFT)
+      * низкий средний чек P2P
+      * снятие наличных в тот же день после зачисления
+      * доминирование одного отправителя (>60 %)
+      * отказы/возвраты антифрода в описаниях
+      * отсутствие POS/онлайн-покупок
+    """
+    from .constants import DEFAULT_THRESHOLDS
+
+    sorted_df = df.sort_values(CANON_DATE).reset_index(drop=True)
+    # выравниваем описания к новому порядку индексов
+    desc_l = descriptions.reset_index(drop=True).reindex(sorted_df.index).fillna("")
+    income_mask = sorted_df[CANON_AMOUNT] > 0
+    expense_mask = sorted_df[CANON_AMOUNT] < 0
+
+    # --- круглые суммы среди входящих ---
+    incoming_amounts = sorted_df.loc[income_mask, CANON_AMOUNT].to_numpy()
+    if incoming_amounts.size:
+        round_mask_any = np.array(
+            [_is_round_amount(float(x)) for x in incoming_amounts], dtype=bool
+        )
+        feat.round_amounts_share = float(round_mask_any.mean())
+
+        # --- одинаковые суммы повторяются ---
+        amount_series = pd.Series(np.round(incoming_amounts, 2))
+        value_counts = amount_series.value_counts()
+        feat.identical_amount_max_repeats = int(value_counts.iloc[0]) if not value_counts.empty else 0
+
+    # --- salary-day drain: по каждой крупной входящей смотрим, сколько ушло за ≤24ч ---
+    salary_in = sorted_df.loc[income_mask & (sorted_df[CANON_AMOUNT] >= 20_000)]
+    drains: list[float] = []
+    for _, row in salary_in.iterrows():
+        start_ts = row[CANON_DATE]
+        end_ts = start_ts + pd.Timedelta(hours=24)
+        out_24h = -sorted_df.loc[
+            expense_mask & (sorted_df[CANON_DATE] >= start_ts) & (sorted_df[CANON_DATE] <= end_ts),
+            CANON_AMOUNT,
+        ].sum()
+        if row[CANON_AMOUNT] > 0:
+            drains.append(min(1.0, float(out_24h) / float(row[CANON_AMOUNT])))
+    if drains:
+        feat.salary_day_drain_ratio = float(np.mean(drains))
+
+    # --- dormant → spike ---
+    if len(sorted_df) >= 2:
+        deltas = np.diff(sorted_df[CANON_DATE].to_numpy()) / np.timedelta64(1, "D")
+        if deltas.size:
+            feat.dormant_days_before_spike = int(np.max(deltas))
+
+    # --- веер разных банков в окне N дней (по ключевым словам в описании) ---
+    bank_hints = (
+        ("сбер", "sber"),
+        ("тиньк", "т-банк", "тбанк", "tinkoff"),
+        ("альфа", "alfa"),
+        ("втб", "vtb"),
+        ("газпром", "gazprom"),
+        ("озон", "ozon"),
+        ("мтс", "mts"),
+        ("райф", "raiff"),
+        ("почта банк", "pochta"),
+        ("уралсиб",),
+        ("ренессанс",),
+        ("яндекс", "yandex"),
+        ("совком",),
+        ("отп", "otp"),
+        ("цифра",),
+    )
+
+    def _detect_bank(s: str) -> str | None:
+        s_low = s.lower()
+        for idx, hints in enumerate(bank_hints):
+            for h in hints:
+                if h in s_low:
+                    return f"bank_{idx}"
+        return None
+
+    income_rows = sorted_df.loc[income_mask].copy().reset_index(drop=True)
+    if not income_rows.empty:
+        income_rows["_bank"] = [
+            _detect_bank(str(d)) for d in income_rows[CANON_DESCRIPTION]
+        ]
+        income_rows = income_rows[income_rows["_bank"].notna()].reset_index(drop=True)
+        if not income_rows.empty:
+            window = pd.Timedelta(days=DEFAULT_THRESHOLDS.multi_bank_fanout_window_days)
+            ts = income_rows[CANON_DATE].to_numpy()
+            banks = income_rows["_bank"].to_numpy()
+            max_unique = 0
+            left = 0
+            for right in range(len(income_rows)):
+                while ts[right] - ts[left] > window:
+                    left += 1
+                max_unique = max(max_unique, len(set(banks[left : right + 1])))
+            feat.multi_bank_fanout_max = int(max_unique)
+
+    # --- трансграничные переводы ---
+    cross_mask = desc_l.apply(lambda s: _matches_any(s, CROSS_BORDER_KEYWORDS))
+    feat.cross_border_transfers_count = int(cross_mask.sum())
+
+    # --- средний чек P2P ---
+    p2p_mask_v2 = sorted_df[CANON_CHANNEL].eq("p2p")
+    p2p_amounts = sorted_df.loc[p2p_mask_v2, CANON_AMOUNT].abs()
+    if not p2p_amounts.empty:
+        feat.avg_p2p_amount = float(p2p_amounts.mean())
+
+    # --- ATM-снятие после зачисления (доля входящих, снятая в тот же день) ---
+    atm_mask = expense_mask & (
+        sorted_df[CANON_CHANNEL].eq("cash")
+        | desc_l.apply(lambda s: _matches_any(s, CASH_WITHDRAWAL_KEYWORDS))
+    )
+    if income_mask.any():
+        day_groups = sorted_df.groupby(sorted_df[CANON_DATE].dt.date)
+        day_ratios: list[float] = []
+        for _, grp in day_groups:
+            day_in = grp.loc[grp[CANON_AMOUNT] > 0, CANON_AMOUNT].sum()
+            if day_in <= 0:
+                continue
+            day_atm = -grp.loc[atm_mask.reindex(grp.index, fill_value=False), CANON_AMOUNT].sum()
+            day_ratios.append(min(1.0, float(day_atm) / float(day_in)))
+        if day_ratios:
+            feat.atm_cashout_after_income_ratio = float(np.mean(day_ratios))
+
+    # --- доминирование одного отправителя ---
+    incoming = sorted_df.loc[income_mask]
+    if not incoming.empty:
+        cps = [
+            _extract_counterparty(d, c)
+            for d, c in zip(incoming[CANON_DESCRIPTION], incoming[CANON_COUNTERPARTY], strict=False)
+        ]
+        cps_filtered = [c for c in cps if c]
+        if cps_filtered:
+            cp_amounts = pd.Series(incoming[CANON_AMOUNT].to_numpy(), index=cps)
+            totals = cp_amounts.groupby(level=0).sum()
+            top_cp = totals.idxmax()
+            if top_cp:
+                feat.one_dominant_sender_share = float(totals.loc[top_cp]) / max(
+                    1.0, float(totals.sum())
+                )
+
+    # --- отказы/возвраты ---
+    reject_mask = desc_l.apply(lambda s: _matches_any(s, REJECT_KEYWORDS))
+    feat.rejected_operations_count = int(reject_mask.sum())
+
+    # --- POS/онлайн-покупки ---
+    card_mask = desc_l.apply(lambda s: _matches_any(s, CARD_PURCHASE_KEYWORDS)) | sorted_df[
+        CANON_CHANNEL
+    ].eq("card") | sorted_df[CANON_CHANNEL].eq("online")
+    feat.card_purchases_count = int((card_mask & expense_mask).sum())
+
+
+def _is_round_amount(x: float, tolerance: float = 0.01) -> bool:
+    """True если сумма «красивая» (кратна 1k/5k/10k/50k/100k)."""
+    ax = abs(x)
+    if ax < 100:
+        return False
+    for base in (100_000.0, 50_000.0, 10_000.0, 5_000.0, 1_000.0):
+        remainder = ax % base
+        if remainder < tolerance or base - remainder < tolerance:
+            return True
+    return False
 
 
 def _compute_banki_case_features(

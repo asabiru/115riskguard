@@ -240,6 +240,106 @@ EXTERNAL_BANK_HINTS: tuple[str, ...] = (
     "внешний перевод",
 )
 
+# --------- добавлено во второй волне разбора banki.ru (2025–2026) ---------
+
+# Трансграничные переводы: банки/кошельки СНГ и стран, куда массово
+# уводятся деньги через СБП/криптообменники. Сбер, Т-Банк и ВТБ в 2025–2026
+# массово блокируют операции даже при попытке личного перевода самому себе.
+CROSS_BORDER_KEYWORDS: tuple[str, ...] = (
+    "казахстан",
+    "kaspi",
+    "каспи",
+    "halyk",
+    "халык",
+    "айыл банк",
+    "ayil bank",
+    "киргизстан",
+    "кыргызстан",
+    "узбекистан",
+    "humo",
+    "humo card",
+    "uzcard",
+    "узкард",
+    "беларусь",
+    "belarusbank",
+    "беларусбанк",
+    "армения",
+    "ameriabank",
+    "freedom finance",
+    "фридом финанс",
+    "грузия",
+    "tbc bank",
+    "georgia",
+    "турция",
+    "isbank",
+    "ziraat",
+    "зираат",
+    "swift",
+    "iban",
+)
+
+# Маркеры отказов/возвратов в описаниях — если их много, значит антифрод
+# банка уже триггерится. В связке с 115-ФЗ это усиливает подозрение.
+REJECT_KEYWORDS: tuple[str, ...] = (
+    "отказ в операции",
+    "операция отклонена",
+    "возврат неуспешного перевода",
+    "возврат средств по отклон",
+    "ошибка списания",
+    "ограничение",
+    "лимит превышен",
+    "заблокировано",
+    "приостановлен",
+    "fraud",
+    "отменено банком",
+)
+
+# Маркеры «пластика» (реальный POS/онлайн-шопинг) — если их нет при
+# активном обороте, счёт выглядит как дроп-счёт (МР 16-МР п.8).
+CARD_PURCHASE_KEYWORDS: tuple[str, ...] = (
+    "покупка",
+    "оплата",
+    "pos ",
+    "pos-",
+    "pos.",
+    "pay ",
+    "apple pay",
+    "samsung pay",
+    "google pay",
+    "sberpay",
+    "сберпэй",
+    "tinkoff pay",
+    "mir pay",
+    "мир пэй",
+    "торгов",
+    "магазин",
+    "аптек",
+    "кафе",
+    "ресторан",
+    "такси",
+    "uber",
+    "яндекс.такси",
+    "яндекс такси",
+    "delivery",
+    "яндекс.еда",
+    "самокат",
+    "ozon",
+    "wildberries",
+)
+
+# Маркеры снятия наличных в банкомате (для правила «обнал сразу после
+# зачисления»). Разделены от CASH_DEPOSIT_KEYWORDS, т.к. это исходящая нога.
+CASH_WITHDRAWAL_KEYWORDS: tuple[str, ...] = (
+    "снятие наличных",
+    "выдача наличных",
+    "снятие в банкомате",
+    "atm ",
+    "банкомат",
+    "cash out",
+    "cashout",
+    "получение наличных",
+)
+
 
 # ----------------------------- пороги ----------------------------------
 
@@ -336,6 +436,57 @@ class Thresholds:
     new_senders_share_yellow: float = 0.5
     new_senders_share_red: float = 0.8
 
+    # -------------- вторая волна правил из banki.ru (2025–2026) --------------
+    # Доля круглых сумм среди P2P-поступлений — маркер автоматизации.
+    round_amounts_share_yellow: float = 0.4
+    round_amounts_share_red: float = 0.7
+
+    # Повторяющиеся одинаковые входящие суммы.
+    identical_amount_repeats_yellow: int = 5
+    identical_amount_repeats_red: int = 12
+
+    # Доля дохода, уходящая в день/на следующий день (salary-drain).
+    salary_day_drain_ratio_yellow: float = 0.7
+    salary_day_drain_ratio_red: float = 0.9
+
+    # Пауза без операций перед всплеском (дни).
+    dormant_days_yellow: int = 30
+    dormant_days_red: int = 60
+
+    # «Веер» банков: входящие из разных внешних банков в течение N дней.
+    multi_bank_fanout_yellow: int = 4
+    multi_bank_fanout_red: int = 8
+    multi_bank_fanout_window_days: int = 7
+
+    # Трансграничные операции (СНГ/swift).
+    cross_border_transfers_yellow: int = 2
+    cross_border_transfers_red: int = 5
+
+    # Очень низкий средний чек P2P.
+    very_low_avg_amount_yellow: float = 2_500.0
+    very_low_avg_amount_red: float = 1_500.0
+    very_low_avg_amount_min_ops: int = 30
+
+    # Доля дохода, снятого в банкомате в тот же день.
+    atm_cashout_after_income_yellow: float = 0.4
+    atm_cashout_after_income_red: float = 0.7
+
+    # Доминирование одного отправителя во входящих.
+    one_dominant_sender_yellow: float = 0.6
+    one_dominant_sender_red: float = 0.85
+
+    # Новая карта с большим оборотом за короткий период (<14 дней).
+    new_card_burst_turnover_yellow: float = 300_000.0
+    new_card_burst_turnover_red: float = 700_000.0
+    new_card_burst_days_max: int = 14
+
+    # Отказы/возвраты в описаниях.
+    rejected_ops_count_yellow: int = 3
+    rejected_ops_count_red: int = 8
+
+    # Отсутствие «настоящего пластика» (POS/онлайн-покупок) при активном счёте.
+    no_card_purchases_tx_threshold: int = 20
+
     # ----------------------- служебное -----------------------
     def tighten(self, factor: float = 0.7) -> Thresholds:
         """Вернуть более консервативные пороги для "Режима максимальной защиты".
@@ -394,6 +545,32 @@ class Thresholds:
             collective_fundraising_window_days=self.collective_fundraising_window_days,
             new_senders_share_yellow=max(0.2, self.new_senders_share_yellow * factor),
             new_senders_share_red=max(0.3, self.new_senders_share_red * factor),
+            round_amounts_share_yellow=max(0.15, self.round_amounts_share_yellow * factor),
+            round_amounts_share_red=max(0.3, self.round_amounts_share_red * factor),
+            identical_amount_repeats_yellow=max(2, int(self.identical_amount_repeats_yellow * factor)),
+            identical_amount_repeats_red=max(4, int(self.identical_amount_repeats_red * factor)),
+            salary_day_drain_ratio_yellow=max(0.4, self.salary_day_drain_ratio_yellow * factor),
+            salary_day_drain_ratio_red=max(0.6, self.salary_day_drain_ratio_red * factor),
+            dormant_days_yellow=max(10, int(self.dormant_days_yellow * factor)),
+            dormant_days_red=max(20, int(self.dormant_days_red * factor)),
+            multi_bank_fanout_yellow=max(2, int(self.multi_bank_fanout_yellow * factor)),
+            multi_bank_fanout_red=max(4, int(self.multi_bank_fanout_red * factor)),
+            multi_bank_fanout_window_days=self.multi_bank_fanout_window_days,
+            cross_border_transfers_yellow=max(1, int(self.cross_border_transfers_yellow * factor)),
+            cross_border_transfers_red=max(2, int(self.cross_border_transfers_red * factor)),
+            very_low_avg_amount_yellow=self.very_low_avg_amount_yellow / factor,
+            very_low_avg_amount_red=self.very_low_avg_amount_red / factor,
+            very_low_avg_amount_min_ops=max(10, int(self.very_low_avg_amount_min_ops * factor)),
+            atm_cashout_after_income_yellow=max(0.15, self.atm_cashout_after_income_yellow * factor),
+            atm_cashout_after_income_red=max(0.3, self.atm_cashout_after_income_red * factor),
+            one_dominant_sender_yellow=max(0.3, self.one_dominant_sender_yellow * factor),
+            one_dominant_sender_red=max(0.5, self.one_dominant_sender_red * factor),
+            new_card_burst_turnover_yellow=self.new_card_burst_turnover_yellow * factor,
+            new_card_burst_turnover_red=self.new_card_burst_turnover_red * factor,
+            new_card_burst_days_max=self.new_card_burst_days_max,
+            rejected_ops_count_yellow=max(1, int(self.rejected_ops_count_yellow * factor)),
+            rejected_ops_count_red=max(2, int(self.rejected_ops_count_red * factor)),
+            no_card_purchases_tx_threshold=max(5, int(self.no_card_purchases_tx_threshold * factor)),
         )
 
 
@@ -806,5 +983,221 @@ RULES: dict[str, RuleSpec] = {
             "от незнакомцев."
         ),
         case_reference="v2b.ru/2025/09/22/droppery-na-kontrole-u-tsb-...",
+    ),
+    # ------------- вторая волна (разбор 100+ кейсов banki.ru 2025–2026) -------------
+    "round_amounts_pattern": RuleSpec(
+        id="round_amounts_pattern",
+        name="Много «ровных» сумм во входящих переводах",
+        category="Автоматизация / дроп",
+        weight=10.0,
+        law="115-ФЗ · МР 16-МР п.2 · Положение 375-П",
+        why_dangerous=(
+            "Поступления на «красивые» суммы (5 000, 10 000, 50 000 ₽) массово — "
+            "явный признак автоматических отправок из «миксеров» или сайтов-обменников. "
+            "Нормальные P2P у физлиц почти всегда «неровные» (ресторан/такси/долг)."
+        ),
+        action_hint=(
+            "Если вы принимаете платежи за услуги — выставляйте счёт на конкретную "
+            "сумму работы (1 247 ₽ за X часов), а не «чисто 5 000». Так банк видит "
+            "живого клиента, а не автомат."
+        ),
+        case_reference="banki.ru — массовые 115-ФЗ-кейсы (Сбер/Т-Банк) 2025–2026",
+    ),
+    "identical_amount_repeats": RuleSpec(
+        id="identical_amount_repeats",
+        name="Многократные одинаковые входящие суммы",
+        category="Автоматизация / дроп",
+        weight=12.0,
+        law="115-ФЗ · МР 16-МР п.2",
+        why_dangerous=(
+            "5+ одинаковых входящих сумм за короткий период — характерный "
+            "паттерн дропов-«операторов»: им льют одинаковые «тики» с обменника "
+            "или биржи. Описан в массовых кейсах Цифра Банка и Ozon Bank 2026."
+        ),
+        action_hint=(
+            "Если это возвраты долгов — попросите друзей добавить копейки "
+            "(«1 001 ₽» вместо «1 000 ₽») и писать осмысленное назначение платежа."
+        ),
+        case_reference="banki.ru/services/responses/bank/response/12957984/ (Ozon, 2026)",
+    ),
+    "salary_day_drain": RuleSpec(
+        id="salary_day_drain",
+        name="Весь доход уходит со счёта в день поступления",
+        category="Транзит и mule",
+        weight=15.0,
+        law="115-ФЗ · МР 16-МР п.6 · 375-П",
+        why_dangerous=(
+            "Если больше 70 % всей зарплаты/входящих уходит на другие счета в тот же "
+            "день — банк расценивает счёт как «перевалочный», а не как «счёт "
+            "физлица для жизни». МР 16-МР прямо называет этот паттерн."
+        ),
+        action_hint=(
+            "Оставляйте остаток хотя бы 10–20 % поступлений до конца дня. "
+            "Если нужно переводить на другой банк — разнесите по времени "
+            "(не в тот же час)."
+        ),
+        case_reference="banki.ru — «зарплата пришла → сразу на другой банк, блок»",
+    ),
+    "dormant_then_active": RuleSpec(
+        id="dormant_then_active",
+        name="Долгая пауза — а потом резкая активность",
+        category="Компрометация / антифрод",
+        weight=14.0,
+        law="161-ФЗ · 115-ФЗ · 519-П",
+        why_dangerous=(
+            "Счёт не использовался 30+ дней, а затем пошли активные операции — "
+            "классический сценарий компрометации карты или «аренды счёта». "
+            "В кейсах 2026 Сбер массово блокирует такие счета и отказывает в "
+            "перевыпуске карт."
+        ),
+        action_hint=(
+            "Если реально долго не пользовались — сначала сделайте пару мелких "
+            "операций (оплата ЖКХ, покупка в магазине), а уже потом крупные. "
+            "Так антифрод увидит «живого» владельца."
+        ),
+        case_reference="banki.ru/services/responses/bank/response/11501829/ (Сбер 2026)",
+    ),
+    "multi_bank_fanout": RuleSpec(
+        id="multi_bank_fanout",
+        name="Веер входящих из разных банков за короткий период",
+        category="Сбор / mule",
+        weight=11.0,
+        law="115-ФЗ · 161-ФЗ · МР 16-МР п.1",
+        why_dangerous=(
+            "Поступления через СБП из 5+ разных банков за неделю — паттерн "
+            "«сбора»: либо неформальная касса, либо дроп-схема «клиенты заливают "
+            "на один счёт со всех банков, владелец выводит». Массово ловится "
+            "Т-Банком и Ozon Bank."
+        ),
+        action_hint=(
+            "Если это настоящий сбор — используйте легальные инструменты "
+            "(Т-Банк «Круги», Сбер «Кошелёк», платформы краудфандинга). Если "
+            "бизнес — регистрируйте ИП/самозанятость."
+        ),
+        case_reference="banki.ru/services/questions-answers/question/1005546/",
+    ),
+    "cross_border_transfers": RuleSpec(
+        id="cross_border_transfers",
+        name="Переводы в/из стран ближнего зарубежья",
+        category="Трансграничные операции",
+        weight=9.0,
+        law="115-ФЗ · 173-ФЗ (валютный контроль) · Указание 5474-У",
+        why_dangerous=(
+            "Переводы на/с карт Kaspi, Halyk, Айыл Банк, Freedom Finance и других "
+            "банков СНГ — в 2025 одна из главных причин блокировок у Сбера, Т-Банка "
+            "и ВТБ. Банк обязан применять усиленный контроль по 173-ФЗ."
+        ),
+        action_hint=(
+            "Не переводите в банк СНГ прямо с зарплатной карты крупные суммы без "
+            "документов. Используйте специализированные сервисы (Золотая Корона, "
+            "KoronaPay) и готовьте обоснование (договор/инвойс/цель поездки)."
+        ),
+        case_reference="banki.ru/services/questions-answers/question/706958/ (Сбер, Айыл Банк)",
+    ),
+    "very_low_avg_amount": RuleSpec(
+        id="very_low_avg_amount",
+        name="Очень мелкий средний чек при большом числе операций",
+        category="Микро-переводы",
+        weight=10.0,
+        law="115-ФЗ · МР 4-МР · МР 16-МР",
+        why_dangerous=(
+            "Десятки P2P-переводов со средним чеком < 1500 ₽ — признак нелегального "
+            "терминала или «комнаты дропов»: мелкие тики с биржи ставок, "
+            "обменника, беттинга."
+        ),
+        action_hint=(
+            "Укрупняйте операции: вместо 30 мелких входящих — одно крупное. "
+            "Если это реальные клиенты — подумайте про единую подписку/пакет."
+        ),
+        case_reference="banki.ru — кейсы нелегальных терминалов 2025",
+    ),
+    "atm_cashout_after_income": RuleSpec(
+        id="atm_cashout_after_income",
+        name="Снятие большей части дохода в банкомате в тот же день",
+        category="Наличные",
+        weight=12.0,
+        law="115-ФЗ · МР 4-МР · МР 19-МР",
+        why_dangerous=(
+            "Если > 50 % поступлений в тот же день уходит через банкомат — "
+            "классический обнал. МР 4-МР прямо описывает этот паттерн как "
+            "«обналичивание доходов физлиц в интересах третьих лиц»."
+        ),
+        action_hint=(
+            "Снимайте наличные реже и в один-два приёма, а не сразу после "
+            "каждого зачисления. Основные траты — безналом."
+        ),
+        case_reference="banki.ru — Почта Банк/Газпромбанк блокировки при снятиях",
+    ),
+    "one_dominant_sender": RuleSpec(
+        id="one_dominant_sender",
+        name="Один отправитель даёт большинство поступлений",
+        category="Скрытый бизнес / аренда",
+        weight=10.0,
+        law="115-ФЗ · ст.209 НК РФ · 422-ФЗ",
+        why_dangerous=(
+            "Когда >60 % всех поступлений — от одного и того же физ. контрагента "
+            "с регулярной периодичностью (особенно ~30 дней), это характерно "
+            "для неоформленной аренды жилья или «серой» зарплаты. Сбер в 2025–2026 "
+            "массово запрашивает документы в таких случаях."
+        ),
+        action_hint=(
+            "Оформите аренду через самозанятость и платите НПД 4 %. Тогда "
+            "поступления получат статус официального дохода, и никаких "
+            "блокировок не будет."
+        ),
+        case_reference="banki.ru — «аренда квартиры, блокировка по 115-ФЗ»",
+    ),
+    "new_card_burst": RuleSpec(
+        id="new_card_burst",
+        name="Свежевыпущенная карта и большой оборот",
+        category="Антифрод / новые счета",
+        weight=14.0,
+        law="161-ФЗ · 115-ФЗ · 519-П",
+        why_dangerous=(
+            "Период наблюдения < 14 дней при обороте 300k+ ₽ — это «молодой» "
+            "счёт с нехарактерным трафиком. В 2026 Яндекс Банк блокировал счета "
+            "уже через 3 минуты после открытия, если обнаруживал такие признаки."
+        ),
+        action_hint=(
+            "На новой карте первые 1–2 недели делайте обычные мелкие операции "
+            "(покупка кофе, оплата связи), прежде чем запускать через неё "
+            "крупные потоки."
+        ),
+        case_reference="banki.ru/services/responses/bank/response/12226201/ (Яндекс Банк, 2026)",
+    ),
+    "rejected_operations": RuleSpec(
+        id="rejected_operations",
+        name="Следы отказов и возвратов со стороны антифрода",
+        category="Антифрод",
+        weight=8.0,
+        law="115-ФЗ · 161-ФЗ",
+        why_dangerous=(
+            "Если в выписке уже есть строки «отказ в операции / возврат неуспешного "
+            "перевода / приостановлено» — антифрод-модель банка вас уже пометила. "
+            "Следующий шаг обычно — блокировка всей карты."
+        ),
+        action_hint=(
+            "Не пытайтесь «обойти» отказ, меняя сумму или канал. Напишите в чат "
+            "банка, приложите документы по проблемным операциям, уточните причину."
+        ),
+        case_reference="banki.ru — массовые «Фрод-мониторинг блокирует перевод» (Сбер, Цифра Банк)",
+    ),
+    "no_card_purchases": RuleSpec(
+        id="no_card_purchases",
+        name="Нет настоящих POS/онлайн-покупок при активном счёте",
+        category="Дроп-счёт",
+        weight=13.0,
+        law="115-ФЗ · МР 16-МР п.8",
+        why_dangerous=(
+            "При 20+ операциях за месяц ни одной реальной покупки (магазин/кафе/"
+            "такси/онлайн) — прямой индикатор «дроп-счёта»: человек не живёт "
+            "со счёта, а использует его только как транзит."
+        ),
+        action_hint=(
+            "Проводите через счёт обычные бытовые расходы — кофе, такси, "
+            "интернет-подписки. Это дёшево и радикально снижает «дроповость» "
+            "профиля в глазах банка."
+        ),
+        case_reference="МР ЦБ 16-МР п.8; banki.ru — кейсы Т-Банк/Альфа 2025–2026",
     ),
 }

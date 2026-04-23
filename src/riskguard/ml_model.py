@@ -76,6 +76,18 @@ FEATURE_ORDER: tuple[str, ...] = (
     "ip_samozanyat_transfers_count",
     "collective_fundraising_max_unique",
     "new_senders_share",
+    # --- вторая волна: разбор 100+ кейсов banki.ru 2025–2026 ---
+    "round_amounts_share",
+    "identical_amount_max_repeats",
+    "salary_day_drain_ratio",
+    "dormant_days_before_spike",
+    "multi_bank_fanout_max",
+    "cross_border_transfers_count",
+    "avg_p2p_amount",
+    "atm_cashout_after_income_ratio",
+    "one_dominant_sender_share",
+    "rejected_operations_count",
+    "card_purchases_count",
 )
 
 

@@ -462,6 +462,101 @@ SELF_TRANSFER_KEYWORDS: tuple[str, ...] = (
     "перевод клиенту банка собственнику",
 )
 
+# ---- четвёртая волна: «скрытые» сигналы из внутренних антифрод-систем ----
+# Источники: Положение ЦБ РФ 860-П (коды признаков 1121/1137/1192),
+# внутренние правила Сбербанка по защите пенсионеров (2025–2026),
+# поведенческие сценарии SAS EC4 / Feedzai (weekend dominance, deep-night ops),
+# forensic AML (распределение Бенфорда), FinCEN SAR narratives.
+
+# 860-П признак 1137: операции, связанные с обращением цифровых прав / ЦФА.
+# Регулярные, однонаправленные, на крупные суммы — прямой признак вывода.
+CFA_DIGITAL_ASSETS_KEYWORDS: tuple[str, ...] = (
+    "цфа",
+    "цифровые финансовые активы",
+    "цифровой финансовый актив",
+    "digital financial asset",
+    "атомайз",
+    "atomyze",
+    "мастерчейн",
+    "masterchain",
+    "лайтхаус",
+    "цифровые права",
+    "выпуск цфа",
+    "погашение цфа",
+    "токенизир",
+    "токенизированный актив",
+    "оператор обмена цифровых",
+    "оиис",
+)
+
+# 860-П признак 1192: расчёты в интересах третьего лица (за Иванова, за ООО X).
+# На выписке физлица проявляется как входящий/исходящий платёж «за …».
+THIRD_PARTY_SETTLEMENT_KEYWORDS: tuple[str, ...] = (
+    "за иванов",
+    "за петров",
+    "за сидор",
+    " за ",
+    "в счёт ",
+    "в счет ",
+    "в пользу ",
+    "по поручению ",
+    "оплата за ",
+    "платёж за ",
+    "платеж за ",
+    "за ооо",
+    "за ип ",
+    "за третье",
+    "погашение обязательства третьего",
+    "исполнение обязательства за",
+)
+
+# Внутренние правила Сбербанка (2025–2026): пенсионные поступления как маркер
+# уязвимости. Быстрый вывод после поступления пенсии/пособия — классический
+# кейс «мошенничество с пенсионерами», о котором открыто рассказывал Сбер в
+# пресс-релизах 2025 года.
+PENSION_KEYWORDS: tuple[str, ...] = (
+    "пенси",
+    "pension",
+    "пфр",
+    "сфр",
+    "социальный фонд",
+    "соцфонд",
+    "соцзащит",
+    "ефс-1",
+    "ефс1",
+    "единая социальная",
+    "ветеран",
+    "инвалид",
+    "пособие",
+    "едв",
+    "дополнительное материальное",
+    "доплата к пенсии",
+)
+
+# Бюджетные средства / госплатежи: имеют особый режим контроля (375-П §3,
+# Приказ Росфинмониторинга №203, 860-П п.14.x). На выписке физлица бюджетные
+# поступления (субсидия, грант, маткапитал, выплата по госконтракту)
+# требуют целевого использования — быстрый транзит = ярко-красный флаг.
+BUDGET_FUNDS_KEYWORDS: tuple[str, ...] = (
+    "субсидия",
+    "субвенция",
+    "бюджетн",
+    "госконтракт",
+    "гос.контракт",
+    "государственный контракт",
+    "казначейств",
+    "44-фз",
+    "44 фз",
+    "223-фз",
+    "223 фз",
+    "грант",
+    "материнский капитал",
+    "маткапитал",
+    "выплата по решению суда",
+    "выплата по госпрограмме",
+    "единовременная выплата",
+)
+
 # Маркеры внешних банков — нужны для детекта «перевод себе через несколько
 # банков» (self-transfer fanout). Расширенный список с учётом БИК/SWIFT-кодов.
 EXTERNAL_BANK_NAMES: tuple[str, ...] = (
@@ -709,6 +804,60 @@ class Thresholds:
     sbp_split_same_receiver_red: int = 5
     sbp_split_window_hours: int = 24
 
+    # ---------- четвёртая волна: «скрытые» сигналы антифрод-систем ----------
+    # 860-П п.1121: возврат контрагенту через другой банк (layering).
+    return_diff_bank_yellow: int = 2
+    return_diff_bank_red: int = 5
+
+    # 860-П п.1137: операции с ЦФА/цифровыми правами (регулярно, крупно).
+    cfa_digital_assets_yellow: int = 2
+    cfa_digital_assets_red: int = 5
+
+    # 860-П п.1192: оплата за третье лицо.
+    third_party_settlement_yellow: int = 3
+    third_party_settlement_red: int = 8
+
+    # Сбербанк (2025–2026): пенсионный вывод — быстрый drain после ПФР/СФР.
+    pensioner_drain_share_yellow: float = 0.6
+    pensioner_drain_share_red: float = 0.85
+    pensioner_drain_window_hours: int = 48
+
+    # SAS/Feedzai behavioral: доля операций на выходных/праздниках.
+    weekend_dominance_share_yellow: float = 0.5
+    weekend_dominance_share_red: float = 0.7
+
+    # FICO behavioral: операции в глубокую ночь (02:00–05:00).
+    deep_night_ratio_yellow: float = 0.1
+    deep_night_ratio_red: float = 0.25
+
+    # Forensic AML: отклонение от закона Бенфорда (chi-squared stat).
+    benford_chi2_yellow: float = 20.0
+    benford_chi2_red: float = 40.0
+    benford_min_ops: int = 30
+
+    # Mule-typology: доля «одноразовых» контрагентов (используются ровно 1 раз).
+    one_time_cp_ratio_yellow: float = 0.6
+    one_time_cp_ratio_red: float = 0.8
+    one_time_cp_min_unique: int = 10
+
+    # Множественные работодатели (зарплатные поступления от ≥3 разных ЮЛ).
+    multi_employer_salary_yellow: int = 3
+    multi_employer_salary_red: int = 5
+
+    # Дробление наличных взносов: ≥N взносов наличных в один день.
+    cash_split_same_day_yellow: int = 3
+    cash_split_same_day_red: int = 5
+
+    # Чистый отток: доля дней с только исходящими операциями.
+    outgoing_only_days_share_yellow: float = 0.3
+    outgoing_only_days_share_red: float = 0.5
+    outgoing_only_days_min_days: int = 14
+
+    # Бюджетный транзит: бюджетные поступления уходят в течение N часов.
+    budget_transit_yellow: int = 1
+    budget_transit_red: int = 3
+    budget_transit_window_hours: int = 72
+
     # ----------------------- служебное -----------------------
     def tighten(self, factor: float = 0.7) -> Thresholds:
         """Вернуть более консервативные пороги для "Режима максимальной защиты".
@@ -826,6 +975,36 @@ class Thresholds:
             sbp_split_same_receiver_yellow=max(2, int(self.sbp_split_same_receiver_yellow * factor)),
             sbp_split_same_receiver_red=max(3, int(self.sbp_split_same_receiver_red * factor)),
             sbp_split_window_hours=self.sbp_split_window_hours,
+            # четвёртая волна
+            return_diff_bank_yellow=max(1, int(self.return_diff_bank_yellow * factor)),
+            return_diff_bank_red=max(2, int(self.return_diff_bank_red * factor)),
+            cfa_digital_assets_yellow=max(1, int(self.cfa_digital_assets_yellow * factor)),
+            cfa_digital_assets_red=max(2, int(self.cfa_digital_assets_red * factor)),
+            third_party_settlement_yellow=max(1, int(self.third_party_settlement_yellow * factor)),
+            third_party_settlement_red=max(3, int(self.third_party_settlement_red * factor)),
+            pensioner_drain_share_yellow=max(0.3, self.pensioner_drain_share_yellow * factor),
+            pensioner_drain_share_red=max(0.5, self.pensioner_drain_share_red * factor),
+            pensioner_drain_window_hours=self.pensioner_drain_window_hours,
+            weekend_dominance_share_yellow=max(0.25, self.weekend_dominance_share_yellow * factor),
+            weekend_dominance_share_red=max(0.4, self.weekend_dominance_share_red * factor),
+            deep_night_ratio_yellow=max(0.05, self.deep_night_ratio_yellow * factor),
+            deep_night_ratio_red=max(0.1, self.deep_night_ratio_red * factor),
+            benford_chi2_yellow=self.benford_chi2_yellow * factor,
+            benford_chi2_red=self.benford_chi2_red * factor,
+            benford_min_ops=max(15, int(self.benford_min_ops * factor)),
+            one_time_cp_ratio_yellow=max(0.3, self.one_time_cp_ratio_yellow * factor),
+            one_time_cp_ratio_red=max(0.5, self.one_time_cp_ratio_red * factor),
+            one_time_cp_min_unique=max(5, int(self.one_time_cp_min_unique * factor)),
+            multi_employer_salary_yellow=max(2, int(self.multi_employer_salary_yellow * factor)),
+            multi_employer_salary_red=max(3, int(self.multi_employer_salary_red * factor)),
+            cash_split_same_day_yellow=max(2, int(self.cash_split_same_day_yellow * factor)),
+            cash_split_same_day_red=max(3, int(self.cash_split_same_day_red * factor)),
+            outgoing_only_days_share_yellow=max(0.15, self.outgoing_only_days_share_yellow * factor),
+            outgoing_only_days_share_red=max(0.25, self.outgoing_only_days_share_red * factor),
+            outgoing_only_days_min_days=self.outgoing_only_days_min_days,
+            budget_transit_yellow=max(1, int(self.budget_transit_yellow * factor)),
+            budget_transit_red=max(1, int(self.budget_transit_red * factor)),
+            budget_transit_window_hours=self.budget_transit_window_hours,
         )
 
 
@@ -1686,5 +1865,233 @@ RULES: dict[str, RuleSpec] = {
             "реквизитам или СБП-платёж с комиссией. Не дробите."
         ),
         case_reference="Правила СБП · banki.ru — массовые блокировки 2025–2026",
+    ),
+    # ------- четвёртая волна: «скрытые» сигналы антифрод-систем -------
+    "return_to_different_bank": RuleSpec(
+        id="return_to_different_bank",
+        name="Возврат контрагенту через другой банк (860-П п.1121)",
+        category="AML / layering",
+        weight=16.0,
+        law="860-П признак 1121 · FATF layering",
+        why_dangerous=(
+            "Положение ЦБ 860-П (признак 1121): возврат денежных средств контрагенту "
+            "в течение короткого промежутка времени на счёт в банке, отличном от банка, "
+            "откуда деньги поступили. Это классический layering-манёвр — «получил из "
+            "банка А, вернул в банк Б» — целенаправленно разрывает цепочку."
+        ),
+        action_hint=(
+            "Возвращайте средства в тот же банк, откуда они пришли. Если контрагент "
+            "просит вернуть на другие реквизиты — это красный флаг."
+        ),
+        case_reference="Положение ЦБ 860-П (ред. 18.06.2025), Приложение, признак 1121",
+    ),
+    "cfa_digital_assets": RuleSpec(
+        id="cfa_digital_assets",
+        name="Операции с ЦФА / цифровыми правами (860-П п.1137)",
+        category="ЦФА / цифровые активы",
+        weight=14.0,
+        law="860-П признак 1137 · 259-ФЗ (о ЦФА)",
+        why_dangerous=(
+            "860-П п.1137: операции, связанные с обращением цифровых прав, которые "
+            "характеризуются однонаправленностью, регулярностью и крупными суммами. "
+            "С 2024 года ЦФА (цифровые финансовые активы) — легальный, но «горячий» "
+            "инструмент: платформы Атомайз, Мастерчейн, Лайтхаус — под усиленным "
+            "контролем ЦБ."
+        ),
+        action_hint=(
+            "Операции с ЦФА фиксируйте через лицензированного оператора (СПБ Биржа, "
+            "Атомайз) и сохраняйте квитанции. Не прокачивайте крупные суммы ЦФА через "
+            "личный счёт без документального обоснования."
+        ),
+        case_reference="Положение ЦБ 860-П, признак 1137 · 259-ФЗ «О ЦФА» (ред. 2025)",
+    ),
+    "third_party_settlement": RuleSpec(
+        id="third_party_settlement",
+        name="Расчёты за третье лицо (860-П п.1192)",
+        category="Транзит / подставной",
+        weight=12.0,
+        law="860-П признак 1192 · 115-ФЗ",
+        why_dangerous=(
+            "860-П п.1192: совершение операции в интересах третьего лица, связанной "
+            "с погашением обязательства. Когда в назначении платежа фигурирует «за "
+            "Иванова», «за ООО X», «в пользу …» — банк видит, что вы расплачиваетесь "
+            "чужими деньгами или за чужие долги. Это прямой признак «подставного» "
+            "плательщика."
+        ),
+        action_hint=(
+            "Платите только за себя. Если действительно помогаете друзьям/родственникам "
+            "— попросите их заплатить самостоятельно или оформите доверенность/поручение."
+        ),
+        case_reference="Положение ЦБ 860-П, признак 1192 · klerk.ru (анализ 860-П)",
+    ),
+    "pensioner_drain_pattern": RuleSpec(
+        id="pensioner_drain_pattern",
+        name="Быстрый вывод после пенсионного поступления",
+        category="Защита пенсионеров",
+        weight=18.0,
+        law="161-ФЗ · Сбербанк внутренние правила 2025 · МР 16-МР",
+        why_dangerous=(
+            "Сбербанк в 2025–2026 внедрил специальные правила защиты пенсионеров: "
+            "если после зачисления пенсии/пособия (ПФР, СФР, ЕДВ) более 60 % суммы "
+            "уходит на незнакомые счета в течение 48 часов — это типичный сценарий "
+            "мошенничества «звонок из банка/полиции/ФСБ». Карта блокируется превентивно."
+        ),
+        action_hint=(
+            "Не переводите пенсию сразу после получения. Подождите 2–3 дня, тратьте "
+            "через карту в магазинах и аптеках. Если поступает «звонок из банка» — "
+            "положите трубку и перезвоните на 900 (Сбер) или по номеру на обороте карты."
+        ),
+        case_reference="sberbank.ru пресс-релиз 2025 «Защита пенсионеров» · 161-ФЗ",
+    ),
+    "weekend_dominance": RuleSpec(
+        id="weekend_dominance",
+        name="Доминирование операций в выходные и праздники",
+        category="Поведенческий / SAS",
+        weight=10.0,
+        law="860-П · SAS EC4 behavioral · Feedzai",
+        why_dangerous=(
+            "Сценарий SAS Enterprise Case Management и Feedzai: у обычного физлица "
+            "основная активность — в будни (зарплата, покупки, коммуналка). Если "
+            ">50 % оборота приходится на субботу/воскресенье — это характерно для "
+            "«серой» торговли, ставок или дроп-активности."
+        ),
+        action_hint=(
+            "Распределяйте операции равномерно по дням недели. Если бизнес реально "
+            "работает по выходным — оформите ИП/самозанятость и проводите через "
+            "расчётный счёт."
+        ),
+        case_reference="SAS EC4 behavioral scenario · Feedzai weekend-anomaly model",
+    ),
+    "deep_night_ops": RuleSpec(
+        id="deep_night_ops",
+        name="Высокая активность в глубокую ночь (02:00–05:00)",
+        category="Поведенческий / FICO",
+        weight=12.0,
+        law="860-П · FICO Falcon behavioral · 161-ФЗ",
+        why_dangerous=(
+            "Правило FICO Falcon и BSS Fraud-Анализ: операции в период 02:00–05:00 — "
+            "аномальны для физлица. Большинство реальных клиентов спят в это время. "
+            "Высокая доля ночных операций — маркер автоматизации (бот/скрипт) "
+            "или перехвата мобильного банка мошенниками."
+        ),
+        action_hint=(
+            "Перенесите переводы на дневное время. Если подозреваете доступ третьих "
+            "лиц — немедленно смените PIN, пароль и отключите push-уведомления "
+            "на неизвестных устройствах."
+        ),
+        case_reference="FICO Falcon behavioral rules · BSS Fraud-Анализ (ночной сценарий)",
+    ),
+    "benford_deviation": RuleSpec(
+        id="benford_deviation",
+        name="Аномалия распределения ведущих цифр сумм (закон Бенфорда)",
+        category="Forensic AML",
+        weight=10.0,
+        law="ACFE Fraud Examiners Manual · FATF data analytics · 860-П",
+        why_dangerous=(
+            "Закон Бенфорда (закон первой цифры): в естественных финансовых данных "
+            "цифра 1 встречается первой ~30 % раз, 2 ~17 %, и т.д. Отклонение от "
+            "этого распределения — классический сигнал подделки/манипуляции, "
+            "который используют ACFE, FinCEN и внутренние аудиты банков."
+        ),
+        action_hint=(
+            "Это аналитический маркер — он не означает, что вы мошенник. Но если "
+            "вы регулярно получаете одинаковые суммы (5 000, 10 000, 50 000) — "
+            "разнообразьте: пусть отправители указывают точные суммы (4 850 ₽ за X)."
+        ),
+        case_reference="ACFE Fraud Examiners Manual § 3.4 · FinCEN SAR Analytics · Nigrini (2012)",
+    ),
+    "one_time_counterparty_ratio": RuleSpec(
+        id="one_time_counterparty_ratio",
+        name="Высокая доля «одноразовых» контрагентов",
+        category="Mule-типаж / антифрод",
+        weight=14.0,
+        law="161-ФЗ · NICE Actimize SAM · Feedzai",
+        why_dangerous=(
+            "Правило NICE Actimize SAM и Feedzai mule-scoring: если >60 % всех "
+            "контрагентов использованы ровно один раз — профиль напоминает дропа: "
+            "ему льют деньги случайные люди по одному разу, он выводит. У обычного "
+            "человека большинство контрагентов повторяются (магазины, друзья, коллеги)."
+        ),
+        action_hint=(
+            "Это аналитика: контрагенты должны повторяться. Если деньги приходят "
+            "от десятков разных людей по одному разу — разберитесь, откуда они и "
+            "не являетесь ли вы невольным звеном в цепочке."
+        ),
+        case_reference="NICE Actimize SAM mule-model · Feedzai mule detection whitepaper",
+    ),
+    "multi_employer_salary": RuleSpec(
+        id="multi_employer_salary",
+        name="Зарплатные поступления от нескольких работодателей",
+        category="Скрытый бизнес / 860-П",
+        weight=10.0,
+        law="860-П · 115-ФЗ · 422-ФЗ",
+        why_dangerous=(
+            "Поступления с назначением «зарплата» от 3+ несвязанных юридических лиц "
+            "за один период — аномалия. Реальный человек редко имеет больше 2 "
+            "работодателей одновременно. Банки расценивают это как серый обнал: "
+            "ИП шлют «зарплату» подставным физлицам, которые потом выводят наличные."
+        ),
+        action_hint=(
+            "Если вы действительно работаете у нескольких работодателей — "
+            "подготовьте трудовые договоры / договоры ГПХ. Иначе — откажитесь "
+            "от «зарплатных» поступлений от сомнительных ООО."
+        ),
+        case_reference="860-П · banki.ru — кейсы обнала через «зарплату» 2025–2026",
+    ),
+    "cash_split_same_day": RuleSpec(
+        id="cash_split_same_day",
+        name="Дробление внесения наличных в один день",
+        category="Structuring / наличные",
+        weight=14.0,
+        law="115-ФЗ ст.6 · МР 11-МР · FATF structuring",
+        why_dangerous=(
+            "3+ внесения наличных через банкомат/кассу в один день — классическое "
+            "дробление: каждая транзакция ниже порога, но суммарно набирается "
+            "крупная сумма. МР 11-МР (код 1407) прямо указывает: «существенное "
+            "увеличение доли наличных» + дробление = маркер structuring."
+        ),
+        action_hint=(
+            "Вносите наличные одной транзакцией. Если сумма > 600k ₽ — "
+            "подготовьте документ о происхождении денег."
+        ),
+        case_reference="МР ЦБ 11-МР (код 1407/1424) · FATF cash structuring typology",
+    ),
+    "outgoing_only_days": RuleSpec(
+        id="outgoing_only_days",
+        name="Чистый отток: дни только с исходящими операциями",
+        category="Drain / mule",
+        weight=12.0,
+        law="115-ФЗ · МР 16-МР · 375-П",
+        why_dangerous=(
+            "Высокая доля дней, когда есть только исходящие операции без входящих, "
+            "при достаточной общей активности — паттерн «drain»: счёт наполняют в "
+            "одни дни, а выводят в другие. Банки (ЦФТ, BSS) трактуют это как "
+            "мнимую «нормализацию» потока."
+        ),
+        action_hint=(
+            "Старайтесь, чтобы входящие и исходящие операции распределялись "
+            "по дням равномерно. Не копите все покупки в один «день вывода»."
+        ),
+        case_reference="ЦФТ Антифрод drain-сценарий · МР 16-МР",
+    ),
+    "budget_funds_fast_transit": RuleSpec(
+        id="budget_funds_fast_transit",
+        name="Бюджетные средства проходят быстрым транзитом",
+        category="Бюджетные / 375-П",
+        weight=16.0,
+        law="375-П §3 · 860-П · Приказ Росфинмониторинга №203",
+        why_dangerous=(
+            "Поступления с бюджетным назначением (субсидия, маткапитал, грант, "
+            "госконтракт) имеют целевой характер. Если они уходят со счёта в "
+            "течение 72 часов на непонятные направления — банк обязан направить "
+            "сведения в Росфинмониторинг (375-П §3.6). Это отдельная категория "
+            "контроля, более строгая, чем обычные переводы."
+        ),
+        action_hint=(
+            "Бюджетные средства храните на счёте минимум 3–5 дней, тратьте "
+            "по назначению (лечение, жильё, образование) и сохраняйте чеки. "
+            "Не выводите маткапитал/субсидии сразу на P2P или наличные."
+        ),
+        case_reference="375-П §3.6 · Приказ Росфинмониторинга №203 · 860-П группа 14",
     ),
 }

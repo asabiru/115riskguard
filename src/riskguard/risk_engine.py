@@ -980,6 +980,234 @@ def _rule_sbp_split_same_receiver(feat: StatementFeatures, th: Thresholds) -> Ri
     )
 
 
+# ---------- четвёртая волна: «скрытые» сигналы антифрод-систем ----------
+
+
+def _rule_return_to_different_bank(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.return_diff_bank_count, th.return_diff_bank_yellow, th.return_diff_bank_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["return_to_different_bank"]
+    msg = (
+        f"Найдено {feat.return_diff_bank_count} пар «получил из банка A → вернул в банк Б» "
+        f"одному контрагенту в течение 72 ч. Положение ЦБ 860-П (признак 1121) прямо "
+        f"относит это к классическому layering-манёвру."
+    )
+    return _make_flag(spec, intensity, feat.return_diff_bank_count, th.return_diff_bank_red, msg)
+
+
+def _rule_cfa_digital_assets(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.cfa_digital_assets_count, th.cfa_digital_assets_yellow, th.cfa_digital_assets_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["cfa_digital_assets"]
+    msg = (
+        f"{feat.cfa_digital_assets_count} операций с признаками ЦФА / цифровых прав "
+        f"(Атомайз, Мастерчейн, токенизированные активы). 860-П п.1137: регулярные "
+        f"однонаправленные операции с ЦФА — основание для усиленного контроля."
+    )
+    return _make_flag(
+        spec, intensity, feat.cfa_digital_assets_count, th.cfa_digital_assets_red, msg
+    )
+
+
+def _rule_third_party_settlement(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.third_party_settlement_count,
+        th.third_party_settlement_yellow,
+        th.third_party_settlement_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["third_party_settlement"]
+    msg = (
+        f"{feat.third_party_settlement_count} платежей с назначением «за третье лицо» "
+        f"(«за Иванова», «за ООО X», «в счёт …»). 860-П п.1192: погашение обязательства "
+        f"в интересах третьего лица — признак подставного плательщика."
+    )
+    return _make_flag(
+        spec, intensity, feat.third_party_settlement_count, th.third_party_settlement_red, msg
+    )
+
+
+def _rule_pensioner_drain(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    # Правило имеет смысл только если реально была хоть одна пенсионная выплата.
+    if feat.pensioner_incomes_count == 0:
+        return None
+    intensity = _intensity(
+        feat.pensioner_drain_share,
+        th.pensioner_drain_share_yellow,
+        th.pensioner_drain_share_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["pensioner_drain_pattern"]
+    msg = (
+        f"После пенсионных/социальных поступлений {feat.pensioner_drain_share * 100:.0f}% "
+        f"суммы ушло в течение {th.pensioner_drain_window_hours} ч. Классический "
+        f"сценарий «звонок из банка/полиции»: карта блокируется превентивно для защиты."
+    )
+    return _make_flag(
+        spec, intensity, feat.pensioner_drain_share, th.pensioner_drain_share_red, msg
+    )
+
+
+def _rule_weekend_dominance(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.weekend_turnover_share,
+        th.weekend_dominance_share_yellow,
+        th.weekend_dominance_share_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["weekend_dominance"]
+    msg = (
+        f"{feat.weekend_turnover_share * 100:.0f}% оборота приходится на выходные и "
+        f"праздники. Поведенческий сценарий SAS EC4 / Feedzai — у обычного физлица "
+        f"активность концентрируется в будни."
+    )
+    return _make_flag(
+        spec, intensity, feat.weekend_turnover_share, th.weekend_dominance_share_red, msg
+    )
+
+
+def _rule_deep_night_ops(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.deep_night_ratio, th.deep_night_ratio_yellow, th.deep_night_ratio_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["deep_night_ops"]
+    msg = (
+        f"{feat.deep_night_ratio * 100:.0f}% операций приходится на глубокую ночь "
+        f"(02:00–05:00). Правило FICO Falcon: аномально для физлица, маркер бота "
+        f"или перехвата мобильного банка."
+    )
+    return _make_flag(spec, intensity, feat.deep_night_ratio, th.deep_night_ratio_red, msg)
+
+
+def _rule_benford_deviation(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.benford_sample_size < th.benford_min_ops:
+        return None
+    intensity = _intensity(feat.benford_chi2, th.benford_chi2_yellow, th.benford_chi2_red)
+    if intensity == 0:
+        return None
+    spec = RULES["benford_deviation"]
+    msg = (
+        f"Распределение ведущих цифр P2P-сумм отличается от закона Бенфорда "
+        f"(χ² = {feat.benford_chi2:.1f} при n = {feat.benford_sample_size}). "
+        f"Классический forensic-AML маркер подделки или автоматизированных выплат."
+    )
+    return _make_flag(spec, intensity, feat.benford_chi2, th.benford_chi2_red, msg)
+
+
+def _rule_one_time_counterparty(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.one_time_counterparty_unique < th.one_time_cp_min_unique:
+        return None
+    intensity = _intensity(
+        feat.one_time_counterparty_ratio,
+        th.one_time_cp_ratio_yellow,
+        th.one_time_cp_ratio_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["one_time_counterparty_ratio"]
+    msg = (
+        f"{feat.one_time_counterparty_ratio * 100:.0f}% контрагентов использованы "
+        f"ровно один раз (всего уникальных: {feat.one_time_counterparty_unique}). "
+        f"NICE Actimize SAM и Feedzai mule-scoring расценивают такой профиль как дропа."
+    )
+    return _make_flag(
+        spec, intensity, feat.one_time_counterparty_ratio, th.one_time_cp_ratio_red, msg
+    )
+
+
+def _rule_multi_employer_salary(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.multi_employer_salary_count,
+        th.multi_employer_salary_yellow,
+        th.multi_employer_salary_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["multi_employer_salary"]
+    msg = (
+        f"Зарплатные поступления от {feat.multi_employer_salary_count} разных "
+        f"работодателей за период. Аномально для обычного физлица — маркер серого "
+        f"обнала через «зицпарт-ИП»."
+    )
+    return _make_flag(
+        spec, intensity, feat.multi_employer_salary_count, th.multi_employer_salary_red, msg
+    )
+
+
+def _rule_cash_split_same_day(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.cash_split_same_day_max,
+        th.cash_split_same_day_yellow,
+        th.cash_split_same_day_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["cash_split_same_day"]
+    msg = (
+        f"В один день — до {feat.cash_split_same_day_max} взносов наличных через "
+        f"банкомат/кассу. Классическое structuring (дробление кэша) — МР ЦБ 11-МР "
+        f"(код 1407) + FATF typology."
+    )
+    return _make_flag(
+        spec, intensity, feat.cash_split_same_day_max, th.cash_split_same_day_red, msg
+    )
+
+
+def _rule_outgoing_only_days(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.outgoing_only_days_share,
+        th.outgoing_only_days_share_yellow,
+        th.outgoing_only_days_share_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["outgoing_only_days"]
+    msg = (
+        f"{feat.outgoing_only_days_share * 100:.0f}% дней активности — только "
+        f"исходящие операции без входящих ({feat.outgoing_only_days_total} дней). "
+        f"Паттерн «drain» — счёт наполняют в одни дни, выводят в другие."
+    )
+    return _make_flag(
+        spec, intensity, feat.outgoing_only_days_share, th.outgoing_only_days_share_red, msg
+    )
+
+
+def _rule_budget_funds_fast_transit(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.budget_funds_incomes_count == 0:
+        return None
+    intensity = _intensity(
+        feat.budget_funds_fast_transit_count,
+        th.budget_transit_yellow,
+        th.budget_transit_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["budget_funds_fast_transit"]
+    msg = (
+        f"{feat.budget_funds_fast_transit_count} бюджетных поступлений (субсидия/"
+        f"маткапитал/грант) ушли со счёта в течение {th.budget_transit_window_hours} ч. "
+        f"375-П §3.6: особый режим контроля целевых средств."
+    )
+    return _make_flag(
+        spec,
+        intensity,
+        feat.budget_funds_fast_transit_count,
+        th.budget_transit_red,
+        msg,
+    )
+
+
 _RULE_FUNCS = [
     _rule_p2p_daily,
     _rule_p2p_month,
@@ -1030,6 +1258,19 @@ _RULE_FUNCS = [
     _rule_self_transfer_multi_banks,
     _rule_mirror_transfers,
     _rule_sbp_split_same_receiver,
+    # четвёртая волна: «скрытые» сигналы из внутренних антифрод-систем
+    _rule_return_to_different_bank,
+    _rule_cfa_digital_assets,
+    _rule_third_party_settlement,
+    _rule_pensioner_drain,
+    _rule_weekend_dominance,
+    _rule_deep_night_ops,
+    _rule_benford_deviation,
+    _rule_one_time_counterparty,
+    _rule_multi_employer_salary,
+    _rule_cash_split_same_day,
+    _rule_outgoing_only_days,
+    _rule_budget_funds_fast_transit,
 ]
 
 

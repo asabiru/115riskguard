@@ -103,6 +103,24 @@ FEATURE_ORDER: tuple[str, ...] = (
     "self_transfer_banks_unique",
     "mirror_transfers_pairs_count",
     "sbp_split_same_receiver_max_ops",
+    # четвёртая волна: «скрытые» сигналы
+    "return_diff_bank_count",
+    "cfa_digital_assets_count",
+    "third_party_settlement_count",
+    "pensioner_drain_share",
+    "pensioner_incomes_count",
+    "weekend_turnover_share",
+    "deep_night_ratio",
+    "benford_chi2",
+    "benford_sample_size",
+    "one_time_counterparty_ratio",
+    "one_time_counterparty_unique",
+    "multi_employer_salary_count",
+    "cash_split_same_day_max",
+    "outgoing_only_days_share",
+    "outgoing_only_days_total",
+    "budget_funds_fast_transit_count",
+    "budget_funds_incomes_count",
 )
 
 

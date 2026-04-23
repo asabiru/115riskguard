@@ -741,6 +741,245 @@ def _rule_no_card_purchases(feat: StatementFeatures, th: Thresholds) -> RiskFlag
     return _make_flag(spec, 1.0, 0, th.no_card_purchases_tx_threshold, msg)
 
 
+# ---------- третья волна: антифрод-системы + комплаенс 2025–2026 ----------
+
+
+def _rule_structuring_sub_threshold(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.structuring_sub_threshold_count,
+        th.structuring_sub_threshold_yellow,
+        th.structuring_sub_threshold_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["structuring_sub_threshold"]
+    msg = (
+        f"Найдено {feat.structuring_sub_threshold_count} операций прямо под порогом "
+        "обязательного контроля (580–599 тыс. или 970–999 тыс. ₽). Антифрод-системы "
+        "(FICO Falcon, SAS AML, ЦФТ, BSS) ловят такой паттерн как FATF-structuring."
+    )
+    return _make_flag(
+        spec, intensity, feat.structuring_sub_threshold_count, th.structuring_sub_threshold_red, msg
+    )
+
+
+def _rule_smurfing_same_receiver(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    ops_intensity = _intensity(
+        feat.smurfing_same_receiver_max_ops,
+        th.smurfing_same_receiver_ops_yellow,
+        th.smurfing_same_receiver_ops_red,
+    )
+    sum_intensity = _intensity(
+        feat.smurfing_same_receiver_max_sum,
+        th.smurfing_same_receiver_sum_yellow,
+        th.smurfing_same_receiver_sum_red,
+    )
+    # правило срабатывает, только когда выполнены оба условия (количество + сумма)
+    intensity = min(ops_intensity, sum_intensity)
+    if intensity == 0:
+        return None
+    spec = RULES["smurfing_same_receiver"]
+    msg = (
+        f"Максимум {feat.smurfing_same_receiver_max_ops} переводов одному получателю за "
+        f"сутки на суммарные {feat.smurfing_same_receiver_max_sum:,.0f} ₽. Классический "
+        "smurfing (FATF) и обход лимита СБП 100k ₽/сутки."
+    )
+    return _make_flag(
+        spec, intensity, feat.smurfing_same_receiver_max_ops, th.smurfing_same_receiver_ops_red, msg
+    )
+
+
+def _rule_nfc_atm_ops(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.nfc_atm_ops_count, th.nfc_atm_ops_yellow, th.nfc_atm_ops_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["nfc_atm_ops"]
+    msg = (
+        f"В выписке {feat.nfc_atm_ops_count} операций с NFC-банкоматом. "
+        "С 01.01.2026 это самостоятельный признак антифрода ЦБ РФ (ОД-2506 п.7) — "
+        "схема «снятие под давлением по NFC/QR»."
+    )
+    return _make_flag(spec, intensity, feat.nfc_atm_ops_count, th.nfc_atm_ops_red, msg)
+
+
+def _rule_droppers_registry(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.droppers_registry_hits_count,
+        th.droppers_registry_hits_yellow,
+        th.droppers_registry_hits_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["droppers_registry"]
+    msg = (
+        f"В выписке {feat.droppers_registry_hits_count} строк со следами реестра "
+        "дропперов ФинЦЕРТ / возврата по 161-ФЗ. Банк уже остановил минимум одну "
+        "операцию — следующий шаг обычно полная блокировка карты."
+    )
+    return _make_flag(
+        spec, intensity, feat.droppers_registry_hits_count, th.droppers_registry_hits_red, msg
+    )
+
+
+def _rule_le_to_individual_regular(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    if feat.has_salary_anchor:
+        # настоящая зарплата снимает подозрение
+        return None
+    intensity = _intensity(
+        feat.le_to_individual_regular_count,
+        th.le_to_individual_regular_yellow,
+        th.le_to_individual_regular_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["le_to_individual_regular"]
+    msg = (
+        f"Найдено {feat.le_to_individual_regular_count} дней с поступлениями от ЮЛ/ИП, "
+        "и это не зарплата. Обновлённое 375-П (редакция 2025) прямо относит такие "
+        "переводы к подозрительным — классические «серые» выплаты или обнал через зиц-ИП."
+    )
+    return _make_flag(
+        spec, intensity, feat.le_to_individual_regular_count, th.le_to_individual_regular_red, msg
+    )
+
+
+def _rule_precious_metals_after_income(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.precious_metals_after_income_count,
+        th.precious_metals_after_income_yellow,
+        th.precious_metals_after_income_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["precious_metals_after_income"]
+    msg = (
+        f"{feat.precious_metals_after_income_count} покупок драгметаллов в пределах 3 "
+        "дней после поступления. По 375-П (ред. 2025) — прямой признак схемы "
+        "«placement → integration» по FATF."
+    )
+    return _make_flag(
+        spec,
+        intensity,
+        feat.precious_metals_after_income_count,
+        th.precious_metals_after_income_red,
+        msg,
+    )
+
+
+def _rule_fatf_high_risk_transfers(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.fatf_high_risk_transfers_count, th.fatf_transfers_yellow, th.fatf_transfers_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["fatf_high_risk_transfers"]
+    msg = (
+        f"{feat.fatf_high_risk_transfers_count} операций с признаками юрисдикций "
+        "высокого риска FATF (Иран/КНДР/офшоры/Дубай/Гонконг). Все такие операции "
+        "идут через усиленный валютный и комплаенс-контроль."
+    )
+    return _make_flag(
+        spec, intensity, feat.fatf_high_risk_transfers_count, th.fatf_transfers_red, msg
+    )
+
+
+def _rule_gift_loan_abuse(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    count_intensity = _intensity(
+        feat.gift_loan_abuse_count, th.gift_loan_abuse_yellow, th.gift_loan_abuse_red
+    )
+    share_intensity = _intensity(
+        feat.gift_loan_abuse_share, th.gift_loan_abuse_share_yellow, th.gift_loan_abuse_share_red
+    )
+    intensity = max(count_intensity, share_intensity)
+    if intensity == 0:
+        return None
+    spec = RULES["gift_loan_abuse"]
+    msg = (
+        f"{feat.gift_loan_abuse_count} операций с назначением «подарок/займ/возврат "
+        f"долга» ({feat.gift_loan_abuse_share * 100:.0f}% входящих P2P). МР ЦБ 4-МР "
+        "называет это прямым признаком прикрытия предпринимательской активности."
+    )
+    return _make_flag(
+        spec, intensity, feat.gift_loan_abuse_count, th.gift_loan_abuse_red, msg
+    )
+
+
+def _rule_velocity_per_minute(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.velocity_per_minute_max, th.velocity_per_minute_yellow, th.velocity_per_minute_red
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["velocity_per_minute"]
+    msg = (
+        f"В один момент совершено {feat.velocity_per_minute_max} операций за минуту. "
+        "FICO Falcon и ЦФТ Антифрод считают это признаком автоматизации (скрипт/бот) "
+        "или перехвата сессии."
+    )
+    return _make_flag(
+        spec, intensity, feat.velocity_per_minute_max, th.velocity_per_minute_red, msg
+    )
+
+
+def _rule_self_transfer_multi_banks(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.self_transfer_banks_unique,
+        th.self_transfer_banks_yellow,
+        th.self_transfer_banks_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["self_transfer_multi_banks"]
+    msg = (
+        f"Переводы «себе» в {feat.self_transfer_banks_unique} разных банков. "
+        "Классический layering по FATF — даже если деньги ваши, банки видят "
+        "попытку оторвать их от исходной точки."
+    )
+    return _make_flag(
+        spec, intensity, feat.self_transfer_banks_unique, th.self_transfer_banks_red, msg
+    )
+
+
+def _rule_mirror_transfers(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.mirror_transfers_pairs_count,
+        th.mirror_transfers_pairs_yellow,
+        th.mirror_transfers_pairs_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["mirror_transfers_counterparty"]
+    msg = (
+        f"Найдено {feat.mirror_transfers_pairs_count} зеркальных пар P2P (туда-сюда) "
+        "с одним и тем же контрагентом. По МР 4-МР это признак «прогона денег» — "
+        "тест антифрода перед крупной операцией или расчёт за крипту."
+    )
+    return _make_flag(
+        spec, intensity, feat.mirror_transfers_pairs_count, th.mirror_transfers_pairs_red, msg
+    )
+
+
+def _rule_sbp_split_same_receiver(feat: StatementFeatures, th: Thresholds) -> RiskFlag | None:
+    intensity = _intensity(
+        feat.sbp_split_same_receiver_max_ops,
+        th.sbp_split_same_receiver_yellow,
+        th.sbp_split_same_receiver_red,
+    )
+    if intensity == 0:
+        return None
+    spec = RULES["sbp_split_same_receiver"]
+    msg = (
+        f"До {feat.sbp_split_same_receiver_max_ops} СБП-переводов одному получателю "
+        f"за {th.sbp_split_window_hours} ч. Классический обход лимита СБП 100k ₽/сутки — "
+        "антифрод (ЦФТ/BSS) автоматически помечает такой канал."
+    )
+    return _make_flag(
+        spec, intensity, feat.sbp_split_same_receiver_max_ops, th.sbp_split_same_receiver_red, msg
+    )
+
+
 _RULE_FUNCS = [
     _rule_p2p_daily,
     _rule_p2p_month,
@@ -778,6 +1017,19 @@ _RULE_FUNCS = [
     _rule_new_card_burst,
     _rule_rejected_operations,
     _rule_no_card_purchases,
+    # третья волна — антифрод-системы и комплаенс 2025–2026
+    _rule_structuring_sub_threshold,
+    _rule_smurfing_same_receiver,
+    _rule_nfc_atm_ops,
+    _rule_droppers_registry,
+    _rule_le_to_individual_regular,
+    _rule_precious_metals_after_income,
+    _rule_fatf_high_risk_transfers,
+    _rule_gift_loan_abuse,
+    _rule_velocity_per_minute,
+    _rule_self_transfer_multi_banks,
+    _rule_mirror_transfers,
+    _rule_sbp_split_same_receiver,
 ]
 
 

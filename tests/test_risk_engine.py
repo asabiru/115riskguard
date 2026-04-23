@@ -271,6 +271,113 @@ def test_rejected_operations_triggers():
     assert any(flag.rule_id == "rejected_operations" and flag.severity == "red" for flag in a.flags)
 
 
+# ----- правила, добавленные в третьей волне (антифрод-системы + комплаенс 2025–2026) -----
+
+
+def test_structuring_sub_threshold_triggers():
+    f = _clean_features()
+    f.structuring_sub_threshold_count = 6
+    a = assess_risk(f)
+    assert any(flag.rule_id == "structuring_sub_threshold" and flag.severity == "red" for flag in a.flags)
+
+
+def test_smurfing_same_receiver_triggers():
+    f = _clean_features()
+    f.smurfing_same_receiver_max_ops = 8
+    f.smurfing_same_receiver_max_sum = 400_000
+    a = assess_risk(f)
+    assert any(flag.rule_id == "smurfing_same_receiver" and flag.severity == "red" for flag in a.flags)
+
+
+def test_smurfing_without_sum_does_not_trigger():
+    f = _clean_features()
+    # количество — красная зона, но сумма маленькая
+    f.smurfing_same_receiver_max_ops = 8
+    f.smurfing_same_receiver_max_sum = 5_000
+    a = assess_risk(f)
+    assert not any(flag.rule_id == "smurfing_same_receiver" for flag in a.flags)
+
+
+def test_nfc_atm_ops_triggers():
+    f = _clean_features()
+    f.nfc_atm_ops_count = 5
+    a = assess_risk(f)
+    assert any(flag.rule_id == "nfc_atm_ops" and flag.severity == "red" for flag in a.flags)
+
+
+def test_droppers_registry_triggers():
+    f = _clean_features()
+    f.droppers_registry_hits_count = 2
+    a = assess_risk(f)
+    assert any(flag.rule_id == "droppers_registry" and flag.severity == "red" for flag in a.flags)
+
+
+def test_le_to_individual_regular_triggers():
+    f = _clean_features()
+    f.has_salary_anchor = False
+    f.le_to_individual_regular_count = 8
+    a = assess_risk(f)
+    assert any(flag.rule_id == "le_to_individual_regular" and flag.severity == "red" for flag in a.flags)
+
+
+def test_le_to_individual_skipped_when_salary_present():
+    f = _clean_features()
+    f.has_salary_anchor = True
+    f.le_to_individual_regular_count = 8
+    a = assess_risk(f)
+    assert not any(flag.rule_id == "le_to_individual_regular" for flag in a.flags)
+
+
+def test_precious_metals_after_income_triggers():
+    f = _clean_features()
+    f.precious_metals_after_income_count = 4
+    a = assess_risk(f)
+    assert any(flag.rule_id == "precious_metals_after_income" and flag.severity == "red" for flag in a.flags)
+
+
+def test_fatf_high_risk_transfers_triggers():
+    f = _clean_features()
+    f.fatf_high_risk_transfers_count = 4
+    a = assess_risk(f)
+    assert any(flag.rule_id == "fatf_high_risk_transfers" and flag.severity == "red" for flag in a.flags)
+
+
+def test_gift_loan_abuse_triggers():
+    f = _clean_features()
+    f.gift_loan_abuse_count = 10
+    f.gift_loan_abuse_share = 0.5
+    a = assess_risk(f)
+    assert any(flag.rule_id == "gift_loan_abuse" and flag.severity == "red" for flag in a.flags)
+
+
+def test_velocity_per_minute_triggers():
+    f = _clean_features()
+    f.velocity_per_minute_max = 8
+    a = assess_risk(f)
+    assert any(flag.rule_id == "velocity_per_minute" and flag.severity == "red" for flag in a.flags)
+
+
+def test_self_transfer_multi_banks_triggers():
+    f = _clean_features()
+    f.self_transfer_banks_unique = 5
+    a = assess_risk(f)
+    assert any(flag.rule_id == "self_transfer_multi_banks" and flag.severity == "red" for flag in a.flags)
+
+
+def test_mirror_transfers_triggers():
+    f = _clean_features()
+    f.mirror_transfers_pairs_count = 10
+    a = assess_risk(f)
+    assert any(flag.rule_id == "mirror_transfers_counterparty" and flag.severity == "red" for flag in a.flags)
+
+
+def test_sbp_split_same_receiver_triggers():
+    f = _clean_features()
+    f.sbp_split_same_receiver_max_ops = 6
+    a = assess_risk(f)
+    assert any(flag.rule_id == "sbp_split_same_receiver" and flag.severity == "red" for flag in a.flags)
+
+
 def test_no_card_purchases_triggers():
     f = _clean_features()
     f.card_purchases_count = 0

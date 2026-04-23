@@ -36,12 +36,19 @@ from .constants import (
     CASH_WITHDRAWAL_KEYWORDS,
     CROSS_BORDER_KEYWORDS,
     CRYPTO_KEYWORDS,
+    DROPPERS_REGISTRY_KEYWORDS,
     EXTERNAL_BANK_HINTS,
+    EXTERNAL_BANK_NAMES,
+    FATF_HIGH_RISK_KEYWORDS,
     GAMBLING_KEYWORDS,
+    GIFT_LOAN_KEYWORDS,
     LIFESTYLE_KEYWORDS,
+    NFC_ATM_KEYWORDS,
+    PRECIOUS_METALS_KEYWORDS,
     REJECT_KEYWORDS,
     SALARY_KEYWORDS,
     SELF_EMPLOYED_KEYWORDS,
+    SELF_TRANSFER_KEYWORDS,
 )
 
 # ----------------------------- dataclass -------------------------------
@@ -151,6 +158,22 @@ class StatementFeatures:
     one_dominant_sender_share: float = 0.0
     rejected_operations_count: int = 0
     card_purchases_count: int = 0
+
+    # ---------- третья волна: антифрод-системы + комплаенс 2025–2026 ----------
+    structuring_sub_threshold_count: int = 0
+    smurfing_same_receiver_max_ops: int = 0
+    smurfing_same_receiver_max_sum: float = 0.0
+    nfc_atm_ops_count: int = 0
+    droppers_registry_hits_count: int = 0
+    le_to_individual_regular_count: int = 0
+    precious_metals_after_income_count: int = 0
+    fatf_high_risk_transfers_count: int = 0
+    gift_loan_abuse_count: int = 0
+    gift_loan_abuse_share: float = 0.0
+    velocity_per_minute_max: int = 0
+    self_transfer_banks_unique: int = 0
+    mirror_transfers_pairs_count: int = 0
+    sbp_split_same_receiver_max_ops: int = 0
 
     # детали для отчёта (не участвуют в ML-модели)
     evidence: dict[str, list[dict]] = field(default_factory=dict)
@@ -318,6 +341,7 @@ def compute_features(df: pd.DataFrame, *, today: pd.Timestamp | None = None) -> 
     # -------- новые метрики из разбора banki.ru-кейсов 2025–2026 --------
     _compute_banki_case_features(df, descriptions, feat)
     _compute_banki_case_features_v2(df, descriptions, feat)
+    _compute_antifraud_features_v3(df, descriptions, feat)
 
     # evidence для отчёта -------------------------------------------
     feat.evidence = _build_evidence(df)
@@ -630,6 +654,168 @@ def _compute_banki_case_features(
                 if _extract_counterparty(d, c) not in known:
                     new_count += 1
             feat.new_senders_share = float(new_count) / float(len(second_half))
+
+
+def _compute_antifraud_features_v3(
+    df: pd.DataFrame,
+    descriptions: pd.Series,
+    feat: StatementFeatures,
+) -> None:
+    """Третья волна признаков: антифрод-системы и комплаенс-правила 2025–2026.
+
+    Покрывает сценарии, которые напрямую ловят FICO Falcon, SAS AML,
+    ЦФТ Антифрод, BSS Fraud и комплаенс-контроль ЦБ РФ:
+      * structuring (FATF + 115-ФЗ ст.6)
+      * smurfing по одному получателю (FATF)
+      * NFC-банкоматы (ОД-2506, действует с 01.01.2026)
+      * реестр дропперов ФинЦЕРТ (Указание 6748-У)
+      * регулярные переводы ЮЛ/ИП → физ.лицу (375-П ред. 2025)
+      * драгметаллы после поступления (375-П ред. 2025)
+      * переводы в юрисдикции высокого риска (FATF)
+      * злоупотребление «подарок/займ» (МР 4-МР)
+      * velocity-правила (FICO Falcon)
+      * self-transfer fanout (FATF layering)
+      * mirror-transfers (FATF layering)
+      * СБП-split одному получателю (обход лимита 100k ₽/сутки)
+    """
+    from .constants import DEFAULT_THRESHOLDS
+
+    th = DEFAULT_THRESHOLDS
+    if df.empty:
+        return
+
+    sorted_df = df.sort_values(CANON_DATE).reset_index(drop=True)
+    desc_l = descriptions.reset_index(drop=True).reindex(sorted_df.index).fillna("")
+    amounts = sorted_df[CANON_AMOUNT].to_numpy()
+    abs_amounts = np.abs(amounts)
+    times = sorted_df[CANON_DATE].to_numpy()
+
+    # --- structuring: суммы под порогом обязательного контроля 600k/1M ₽ ---
+    structuring_mask = (
+        ((abs_amounts >= th.structuring_lower_bound_rub) & (abs_amounts <= th.structuring_upper_bound_rub))
+        | ((abs_amounts >= th.structuring_lower_bound_mln) & (abs_amounts <= th.structuring_upper_bound_mln))
+    )
+    feat.structuring_sub_threshold_count = int(structuring_mask.sum())
+
+    # --- smurfing: N+ переводов одному получателю за сутки ---
+    expense_mask = amounts < 0
+    expense_df = sorted_df.loc[expense_mask].copy()
+    if not expense_df.empty:
+        expense_df["_cp"] = [
+            _extract_counterparty(d, c)
+            for d, c in zip(expense_df[CANON_DESCRIPTION], expense_df[CANON_COUNTERPARTY], strict=False)
+        ]
+        expense_df["_day"] = expense_df[CANON_DATE].dt.date
+        expense_df = expense_df[expense_df["_cp"] != ""]
+        if not expense_df.empty:
+            grp = expense_df.groupby(["_cp", "_day"])[CANON_AMOUNT].agg(["count", lambda s: float(s.abs().sum())])
+            grp.columns = ["ops", "sum"]
+            if not grp.empty:
+                feat.smurfing_same_receiver_max_ops = int(grp["ops"].max())
+                feat.smurfing_same_receiver_max_sum = float(grp["sum"].max())
+
+    # --- NFC-банкоматы (ОД-2506) ---
+    nfc_mask = desc_l.apply(lambda s: _matches_any(s, NFC_ATM_KEYWORDS))
+    feat.nfc_atm_ops_count = int(nfc_mask.sum())
+
+    # --- ФинЦЕРТ / реестр дропперов ---
+    dropper_mask = desc_l.apply(lambda s: _matches_any(s, DROPPERS_REGISTRY_KEYWORDS))
+    feat.droppers_registry_hits_count = int(dropper_mask.sum())
+
+    # --- регулярные переводы ЮЛ/ИП физ.лицу, не зарплата ---
+    le_desc_mask = desc_l.apply(
+        lambda s: (_matches_any(s, SELF_EMPLOYED_KEYWORDS) or _matches_any(s, BUSINESS_KEYWORDS))
+        and not _matches_any(s, SALARY_KEYWORDS)
+    )
+    le_incoming_mask = (sorted_df[CANON_AMOUNT] > 0) & le_desc_mask
+    # Берём только входящие по разным датам, а не точные повторы.
+    if le_incoming_mask.any():
+        le_sub = sorted_df.loc[le_incoming_mask]
+        unique_days = le_sub[CANON_DATE].dt.date.nunique()
+        feat.le_to_individual_regular_count = int(unique_days)
+
+    # --- драгметаллы сразу после поступления (в течение 3 дней) ---
+    precious_mask = desc_l.apply(lambda s: _matches_any(s, PRECIOUS_METALS_KEYWORDS)) & (sorted_df[CANON_AMOUNT] < 0)
+    if precious_mask.any():
+        income_ts = sorted_df.loc[amounts > 0, CANON_DATE].to_numpy()
+        cnt = 0
+        for ts in sorted_df.loc[precious_mask, CANON_DATE]:
+            ts64 = np.datetime64(ts)
+            window = (income_ts <= ts64) & (income_ts >= ts64 - np.timedelta64(3, "D"))
+            if window.any():
+                cnt += 1
+        feat.precious_metals_after_income_count = int(cnt)
+
+    # --- FATF high-risk юрисдикции ---
+    fatf_mask = desc_l.apply(lambda s: _matches_any(s, FATF_HIGH_RISK_KEYWORDS))
+    feat.fatf_high_risk_transfers_count = int(fatf_mask.sum())
+
+    # --- подарок/займ/возврат долга: подсчёт и доля среди входящих P2P ---
+    gift_mask = desc_l.apply(lambda s: _matches_any(s, GIFT_LOAN_KEYWORDS))
+    feat.gift_loan_abuse_count = int(gift_mask.sum())
+    p2p_in_mask = (sorted_df[CANON_CHANNEL] == "p2p") & (amounts > 0)
+    p2p_in_count = int(p2p_in_mask.sum())
+    if p2p_in_count > 0:
+        gift_in_count = int((gift_mask & p2p_in_mask).sum())
+        feat.gift_loan_abuse_share = float(gift_in_count) / float(p2p_in_count)
+
+    # --- velocity: макс. число операций в одну минуту ---
+    if len(sorted_df) >= 2:
+        minute_bucket = sorted_df[CANON_DATE].dt.floor("min")
+        per_min = minute_bucket.value_counts()
+        feat.velocity_per_minute_max = int(per_min.max()) if not per_min.empty else 0
+
+    # --- self-transfer fanout: переводы «себе» в разные банки ---
+    self_mask = desc_l.apply(lambda s: _matches_any(s, SELF_TRANSFER_KEYWORDS)) & (amounts < 0)
+    if self_mask.any():
+        self_descs = desc_l.loc[self_mask]
+        banks_seen: set[str] = set()
+        for s in self_descs:
+            for bank in EXTERNAL_BANK_NAMES:
+                if bank in s:
+                    banks_seen.add(bank)
+                    break
+        feat.self_transfer_banks_unique = int(len(banks_seen))
+
+    # --- mirror transfers: пары «туда-сюда» с одним контрагентом ---
+    p2p_df = sorted_df[sorted_df[CANON_CHANNEL] == "p2p"].copy()
+    if not p2p_df.empty:
+        p2p_df["_cp"] = [
+            _extract_counterparty(d, c)
+            for d, c in zip(p2p_df[CANON_DESCRIPTION], p2p_df[CANON_COUNTERPARTY], strict=False)
+        ]
+        mirror_pairs = 0
+        for cp, sub in p2p_df.groupby("_cp"):
+            if not cp:
+                continue
+            has_in = (sub[CANON_AMOUNT] > 0).any()
+            has_out = (sub[CANON_AMOUNT] < 0).any()
+            if has_in and has_out:
+                mirror_pairs += min((sub[CANON_AMOUNT] > 0).sum(), (sub[CANON_AMOUNT] < 0).sum())
+        feat.mirror_transfers_pairs_count = int(mirror_pairs)
+
+    # --- СБП-split одному получателю (в пределах окна часов) ---
+    if not expense_df.empty and "_cp" in expense_df.columns:
+        sbp_out_mask = expense_df[CANON_CHANNEL].eq("p2p") | expense_df[CANON_DESCRIPTION].str.lower().str.contains(
+            "сбп", na=False
+        )
+        sbp_sub = expense_df.loc[sbp_out_mask]
+        if not sbp_sub.empty:
+            max_ops = 0
+            window = pd.Timedelta(hours=th.sbp_split_window_hours)
+            for _cp, grp in sbp_sub.groupby("_cp"):
+                if not _cp:
+                    continue
+                ts = grp[CANON_DATE].sort_values().to_numpy()
+                left = 0
+                for right in range(len(ts)):
+                    while ts[right] - ts[left] > window:
+                        left += 1
+                    max_ops = max(max_ops, right - left + 1)
+            feat.sbp_split_same_receiver_max_ops = int(max_ops)
+
+    # Защищаемся от «сломанных» numpy типов в суммах
+    _ = times  # numpy array already kept for potential extensions
 
 
 # ----------------------------- evidence ----------------------------

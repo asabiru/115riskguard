@@ -54,7 +54,6 @@ from .constants import (
     CASH_KEYWORDS,
     CRYPTO_KEYWORDS,
     GAMBLING_KEYWORDS,
-    P2P_KEYWORDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -325,12 +324,32 @@ def _matches_any(text: str, keywords: Iterable[str]) -> bool:
     return any(kw in text for kw in keywords)
 
 
+_P2P_PERSON_HINTS: tuple[str, ...] = (
+    "перевод от",
+    "перевод для",
+    "перевод клиенту",
+    "перевод физическому",
+    "перевод физлицу",
+    "перевод по номеру телефона",
+    "c2c",
+    "card2card",
+)
+
+
 def infer_channel(description: str, category: str | None = None, amount: float = 0.0) -> str:
     """Эвристически определить канал операции.
 
     Возвращает один из каналов: ``p2p``, ``cash``, ``crypto``, ``gambling``,
     ``card``, ``online``, ``other``.
+
+    Порядок важен: карточные покупки через QR-коды СБП идут в «card», а не
+    «p2p», несмотря на наличие слова «СБП» в описании — это не перевод
+    физлицу, а оплата мерчанту. Сначала проверяем мерчант-маркеры
+    («_P_QR», «оплата по QR», категории «Рестораны/Супермаркеты» и т. п.),
+    и только потом — перевод между физлицами.
     """
+    from .constants import CARD_PURCHASE_KEYWORDS  # локальный импорт — избегаем циклов
+
     blob = f"{description or ''} {category or ''}".lower()
     if _matches_any(blob, CRYPTO_KEYWORDS):
         return "crypto"
@@ -338,10 +357,17 @@ def infer_channel(description: str, category: str | None = None, amount: float =
         return "gambling"
     if _matches_any(blob, CASH_KEYWORDS):
         return "cash"
-    if _matches_any(blob, P2P_KEYWORDS):
-        return "p2p"
-    if any(k in blob for k in ("покуп", "оплата", "покупка", "mcc")):
+    # QR-платёж мерчанту (Сбер помечает это как «Оплата по QR–коду СБП») —
+    # это card-покупка, а не P2P, даже если содержит «СБП».
+    if _matches_any(blob, CARD_PURCHASE_KEYWORDS):
         return "card"
+    # P2P — только если явно перевод физлицу / «C2C» / «по номеру телефона».
+    if _matches_any(blob, _P2P_PERSON_HINTS):
+        return "p2p"
+    # СБП без маркеров мерчанта и без маркера физлица — считаем P2P
+    # (в большинстве банков «перевод СБП» означает именно P2P по телефону).
+    if "сбп" in blob or "p2p" in blob:
+        return "p2p"
     if any(k in blob for k in ("online", "интернет-магазин", "подписк")):
         return "online"
     return "other"

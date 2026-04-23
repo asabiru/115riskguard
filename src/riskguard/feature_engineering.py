@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 
@@ -169,14 +170,50 @@ def _is_p2p(channel: str) -> bool:
     return channel == "p2p"
 
 
+_P2P_PERSON_RE = re.compile(
+    r"перевод\s+(?:от|для|клиенту|физическому(?:\s+лицу)?|физлицу)\s+"
+    r"(?P<name>[а-яё][а-яё\s\.\-]{2,60}?)"
+    r"(?=\s*(?:\.|операция\s+по|номер|тел\.|$))",
+    re.IGNORECASE,
+)
+
+_PERSON_TAIL_RE = re.compile(
+    r"\s*(?:\*+\d{2,}|операция\s+по\s+(?:счёту|счету|карте).+|по\s+номеру\s+тел.+)$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_person_name(raw: str) -> str:
+    """Нормализовать имя получателя: убрать номера карт/счетов и лишние пробелы."""
+    cleaned = _PERSON_TAIL_RE.sub("", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .-")
+    return cleaned.lower()
+
+
 def _extract_counterparty(desc: str, counterparty: str) -> str:
-    """Собрать ключ-идентификатор контрагента для подсчёта уникальных."""
+    """Собрать ключ-идентификатор контрагента для подсчёта уникальных P2P-получателей.
+
+    Возвращает пустую строку для мерчант-транзакций (покупки, QR-оплаты и т. п.)
+    — они не должны увеличивать счётчик уникальных контрагентов.
+    Для переводов физлицам извлекает нормализованное имя, сворачивая
+    варианты записи одного человека в один ключ (без «****0880» и «операция
+    по счету/карте»).
+    """
     cp = (counterparty or "").strip()
-    if cp:
-        return cp.lower()
-    # используем имя из описания: берём первое разумное слово после ключевой фразы
-    text = (desc or "").lower()
-    return text[:64]
+    if cp and not cp.lower().startswith(("nan", "none")):
+        return _normalize_person_name(cp)
+    text = (desc or "").strip()
+    if not text:
+        return ""
+    m = _P2P_PERSON_RE.search(text)
+    if m:
+        return _normalize_person_name(m.group("name"))
+    low = text.lower()
+    # Явно P2P-фраза без имени — отдаём усечённую строку как fallback.
+    if any(kw in low for kw in ("перевод от", "перевод для", "перевод сбп", "c2c", "card2card")):
+        return _normalize_person_name(text[:64])
+    # Иначе это мерчант-операция — в уникальных контрагентах не учитываем.
+    return ""
 
 
 def _matches_any(text: str, keywords: tuple[str, ...]) -> bool:

@@ -506,15 +506,110 @@ def _read_csv_robust(buf: Any) -> pd.DataFrame:
     raise ValueError(_READ_ERR.format(last_err))
 
 
-def _pdf_to_df(data: bytes) -> pd.DataFrame:
-    """Минимальный PDF-парсер на pdfplumber.
+_SBER_PDF_MARKERS: tuple[str, ...] = (
+    "www.sberbank.ru",
+    "СберБанк Онлайн",
+    "Выписка по платёжному счёту",
+    "Выписка по платежному счету",
+    "ИТОГО ПО ОПЕРАЦИЯМ",
+)
 
-    Стратегия: достаём все таблицы со всех страниц; берём самую широкую
-    (по числу колонок) и объединяем все страницы этой таблицы построчно.
-    Если таблиц не найдено — извлекаем текст и пытаемся распарсить
-    построчно регулярным выражением «дата сумма описание».
+# Основная строка Sber-операции: DD.MM.YYYY HH:MM <категория> <+?сумма> <остаток>
+_SBER_TX_RE = re.compile(
+    r"^(?P<date>\d{2}\.\d{2}\.\d{4})\s+"
+    r"(?P<time>\d{2}:\d{2})\s+"
+    r"(?P<category>.+?)\s+"
+    r"(?P<amount>\+?(?:\d+\s)*\d+,\d{2})\s+"
+    r"(?P<balance>(?:\d+\s)*\d+,\d{2})\s*$"
+)
+# Строка продолжения: DD.MM.YYYY <код авторизации 4–8 цифр> <описание>
+_SBER_CONT_RE = re.compile(
+    r"^(?P<date>\d{2}\.\d{2}\.\d{4})\s+(?P<code>\d{4,8})\s+(?P<description>.+)$"
+)
+
+
+def _parse_sber_pdf_text(text: str) -> pd.DataFrame:
+    """Разобрать текст PDF-выписки Сбера 2025–2026 (СберБанк Онлайн).
+
+    Каждая операция занимает 2 строки: первая — дата+время+категория+сумма+остаток,
+    вторая — дата+код авторизации+описание. Иногда описание переносится на
+    третью строку (хвост типа ``****0880``).
+    """
+    records: list[dict[str, str]] = []
+    cur: dict[str, str] | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = _SBER_TX_RE.match(line)
+        if m:
+            if cur is not None:
+                records.append(cur)
+            cur = {
+                "Дата операции": m.group("date"),
+                "Время": m.group("time"),
+                "Категория": m.group("category").strip(),
+                "Сумма": m.group("amount"),
+                "Остаток": m.group("balance"),
+                "Описание": "",
+                "Код авторизации": "",
+            }
+            continue
+        m2 = _SBER_CONT_RE.match(line)
+        if m2 and cur is not None and not cur["Описание"]:
+            cur["Описание"] = m2.group("description").strip()
+            cur["Код авторизации"] = m2.group("code")
+            continue
+        # короткий хвост (например "****0880") — добавляем к описанию текущей.
+        # Игнорируем page-break артефакты: колонтитулы, футеры, номера страниц.
+        if (
+            cur is not None
+            and cur["Описание"]
+            and len(line) <= 30
+            and line.startswith("*")
+        ):
+            cur["Описание"] = f"{cur['Описание']} {line}".strip()
+    if cur is not None:
+        records.append(cur)
+    if not records:
+        raise ValueError("Sber PDF: не найдено ни одной операции.")
+
+    df = pd.DataFrame(records)
+    # В Сбере знак `+` означает доход; иначе — расход. Приводим сумму в подписанный float,
+    # чтобы нормализатор получил уже правильный знак.
+    def _signed_amount(raw: str) -> float:
+        stripped = raw.replace(" ", "").replace(",", ".")
+        sign = 1.0 if stripped.startswith("+") else -1.0
+        value = float(stripped.lstrip("+"))
+        return sign * value
+
+    df["Сумма"] = df["Сумма"].map(_signed_amount)
+    df["Остаток"] = df["Остаток"].map(lambda s: float(s.replace(" ", "").replace(",", ".")))
+    return df
+
+
+def _pdf_to_df(data: bytes) -> pd.DataFrame:
+    """PDF-парсер: отдельная ветка под Сбер, затем table extraction, затем regex.
+
+    Стратегия:
+      1. Читаем весь текст — если есть маркеры Сбера, идём специализированным
+         парсером (`_parse_sber_pdf_text`), который понимает многострочный
+         формат операции и знак «+» для поступлений.
+      2. Иначе достаём все таблицы со всех страниц; берём самую широкую
+         (по числу колонок) и объединяем построчно.
+      3. Иначе — regex по тексту с жёсткой привязкой суммы к концу строки
+         (чтобы не принимать 6-значный код авторизации за сумму).
     """
     import pdfplumber  # локальный импорт — тяжёлая зависимость
+
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+
+    if any(m in text for m in _SBER_PDF_MARKERS):
+        try:
+            return _parse_sber_pdf_text(text)
+        except ValueError:
+            pass  # fallback на общий путь
 
     tables: list[list[list[str]]] = []
     with pdfplumber.open(io.BytesIO(data)) as pdf:
@@ -528,17 +623,15 @@ def _pdf_to_df(data: bytes) -> pd.DataFrame:
         rows = [r for r in widest[1:] if any(cell is not None and str(cell).strip() for cell in r)]
         return pd.DataFrame(rows, columns=header)
 
-    # fallback — regex по тексту
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
-        text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+    # fallback — regex по тексту, с жёсткой привязкой суммы к концу строки
     pattern = re.compile(
-        r"(?P<date>\d{2}[./-]\d{2}[./-]\d{2,4})\s+"
-        r"(?P<amount>[-+]?\d[\d\s.,]*)\s+"
-        r"(?P<description>.+)"
+        r"^(?P<date>\d{2}[./-]\d{2}[./-]\d{2,4})\s+"
+        r"(?P<description>.+?)\s+"
+        r"(?P<amount>[-+]?(?:\d+[\s ])*\d+[.,]\d{2})\s*$"
     )
     records = []
     for line in text.splitlines():
-        m = pattern.search(line)
+        m = pattern.match(line.strip())
         if m:
             records.append(m.groupdict())
     if not records:
